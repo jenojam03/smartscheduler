@@ -1,67 +1,67 @@
 # SmartScheduler
 
-Sistema multi-agente intelligente per la pianificazione, generazione e ottimizzazione automatica dei turni di lavoro, basato sull'integrazione sinergica tra **Modelli di Linguaggio (LLM)** e **Constraint Programming (Google OR-Tools CP-SAT)**.
+An intelligent multi-agent system for automated worker and nurse scheduling optimization, combining the semantic reasoning of **Large Language Models (LLMs)** with the mathematical rigor of **Constraint Programming (Google OR-Tools CP-SAT)**.
 
 ---
 
-## 📌 Panoramica
+## 📌 Overview
 
-**SmartScheduler** risolve il problema complesso del *Nurse/Worker Scheduling Problem* combinando:
-1. **Comprensione del linguaggio naturale**: interpretazione delle preferenze dei lavoratori espresse in linguaggio informale tramite LLM (LangChain + Ollama).
-2. **Ottimizzazione matematica rigorosa**: formulazione di vincoli hard e soft tramite solver CP-SAT per garantire conformità normativa, sicurezza e turni equi.
-3. **Ciclo di Refinement e Bilanciamento (Fairness)**: ridistribuzione automatica del carico di lavoro e dei turni gravosi (es. notturni e festivi) per massimizzare la soddisfazione globale e minimizzare la disparità (indice di Gini).
-4. **Risoluzione dinamica delle infattibilità**: diagnosi simbolica delle cause di infeasibility e generazione guidata di proposte di rilassamento dei vincoli.
-5. **Interfaccia Grafica Moderna**: UI dark-mode realizzata in CustomTkinter con visualizzazione tabellare interattiva, avanzamento pipeline in tempo reale e metriche di equità.
-
----
-
-## 🏗️ Architettura Multi-Agente
-
-Il sistema è strutturato come una pipeline cooperativa di agenti specializzati:
-
-- **Worker Preference Formalization Agent** (`worker_agent.py`): Esegue il parsing delle preferenze non strutturate dei lavoratori, traducendole in oggetti fortemente tipizzati con validazione Pydantic e caching deterministico.
-- **Schedule Drafting Agent** (`drafting_agent.py`): Genera la prima bozza fattibile del calendario mensile traducendo regole contrattuali e vincoli normativi in un modello CP-SAT.
-- **Verification & Fairness Agent** (`verification_agent.py`): Verifica l'assenza di violazioni di vincoli hard e calcola metriche di equità (media, deviazione standard, distribuzione festivi/notti).
-- **Schedule Refinement Agent** (`refinement_loop.py`): Ciclo iterativo che incrementa la soddisfazione minima dei lavoratori e livella il carico tra colleghi.
-- **Infeasibility Diagnostician & Dynamic Replanning Agent** (`infeasibility_agent.py`): Identifica i colli di bottiglia matematici e sintetizza alternative di rilassamento comprensibili all'utente.
-- **GUI Application** (`gui.py`): Dashboard interattiva per selezione dei file di configurazione, monitoraggio dell'esecuzione, ispezione della griglia turni e applicazione di trade-off.
+**SmartScheduler** solves complex instances of the *Nurse/Worker Scheduling Problem* by uniting:
+1. **Natural Language Understanding**: Parses unstructured worker shift requests, preferences, and holiday constraints via LLMs (LangChain + Ollama).
+2. **Rigorous Mathematical Optimization**: Formulates hard contractual constraints and soft preferences using Google OR-Tools CP-SAT to guarantee legality, safety, and operational feasibility.
+3. **Iterative Refinement & Fairness Balancing**: Dynamically redistributes night shifts, holidays, and workload variance to maximize global satisfaction while minimizing disparity (Gini coefficient).
+4. **Symbolic Infeasibility Diagnosis & Dynamic Replanning**: Pinpoints mathematical bottlenecks in conflicting constraints and generates actionable relaxation proposals.
+5. **Modern Desktop Interface**: Dark-mode GUI built with CustomTkinter featuring an interactive monthly shift grid, real-time pipeline visualizer, fairness distribution charts, and tradeoff controls.
 
 ---
 
-## 📁 Struttura del Progetto
+## 🏗️ Multi-Agent Architecture
+
+The system operates as a cooperative pipeline of specialized agents:
+
+- **Worker Preference Formalization Agent** (`worker_agent.py`): Translates informal shift requests into strongly-typed Pydantic profiles with deterministic hash caching.
+- **Schedule Drafting Agent** (`drafting_agent.py`): Compiles coverage requirements, contractual limits, and worker preferences into a CP-SAT model to produce the initial feasible schedule.
+- **Hard & Fairness Verification Agent** (`verification_agent.py`): Rigorously audits schedules against labor regulations (e.g., mandatory rest periods, max consecutive shifts) and computes fairness metrics.
+- **Schedule Refinement Agent** (`refinement_loop.py`): Iteratively raises minimum satisfaction thresholds and re-balances burdensome shifts across staff.
+- **Infeasibility Diagnostician & Dynamic Replanning Agent** (`infeasibility_agent.py`): Identifies unsatisfiable constraint combinations and synthesizes human-understandable relaxation alternatives.
+- **GUI Dashboard** (`gui.py`): Real-time interactive UI for loading configurations, tracking execution, inspecting shift rosters, and fine-tuning schedules.
+
+---
+
+## 📁 Repository Structure
 
 ```
 smartscheduler/
 ├── Stages/
-│   ├── calendar_manager.py      # Gestione dell'orizzonte temporale e giorni festivi
-│   ├── config_loader.py         # Caricamento e validazione delle configurazioni
-│   ├── drafting_agent.py        # Generazione bozza con Google OR-Tools CP-SAT
-│   ├── gui.py                   # Interfaccia grafica CustomTkinter
-│   ├── infeasibility_agent.py   # Diagnostica simbolica e replanning
-│   ├── models.py                # Modelli dati Pydantic e costanti turni
-│   ├── refinement_loop.py       # Loop di ottimizzazione e massimizzazione fairness
-│   ├── rendering.py             # Utility di rendering
-│   ├── satisfaction_model.py    # Calcolo score di soddisfazione dei lavoratori
-│   ├── verification_agent.py    # Verifica vincoli hard e metriche
-│   ├── worker_agent.py          # Agente LangChain/Ollama per preferenze
-│   ├── assets/                  # Icone applicative
-│   └── configs/                 # Esempi di file di configurazione
-├── assets/                      # Asset grafici
-├── main.py                      # Entry point dell'applicazione
-├── requirements.txt             # Dipendenze Python
-└── .gitignore                   # Esclusioni per file temporanei e cache
+│   ├── calendar_manager.py      # Scheduling horizon and holiday management
+│   ├── config_loader.py         # Configuration file parsing and validation
+│   ├── drafting_agent.py        # CP-SAT constraint programming solver
+│   ├── gui.py                   # CustomTkinter modern dark-mode GUI
+│   ├── infeasibility_agent.py   # Symbolic conflict diagnosis & replanning
+│   ├── models.py                # Pydantic data schemas & shift constants
+│   ├── refinement_loop.py       # Iterative fairness optimization loop
+│   ├── rendering.py             # Schedule display utilities
+│   ├── satisfaction_model.py    # Worker satisfaction scoring functions
+│   ├── verification_agent.py    # Hard constraint and fairness validation
+│   ├── worker_agent.py          # LLM preference extraction (LangChain / Ollama)
+│   ├── assets/                  # UI icon assets
+│   └── configs/                 # Sample operational configuration files
+├── assets/                      # Shared graphical assets
+├── main.py                      # Application root entry point
+├── requirements.txt             # Python dependencies
+└── .gitignore                   # Exclusions for temporary files and local caches
 ```
 
 ---
 
-## 🚀 Requisiti e Installazione
+## 🚀 Requirements & Installation
 
-### 1. Prerequisiti
+### 1. Prerequisites
 - **Python 3.10+**
-- **Ollama** in esecuzione in locale (es. con modello `llama3` o `gemma2`) per la formalizzazione delle preferenze.
+- **Ollama** running locally (e.g., with `llama3` or `gemma2`) for natural language preference parsing.
 
-### 2. Installazione delle dipendenze
-Clona il repository e installa i pacchetti richiesti:
+### 2. Install Dependencies
+Clone the repository and install the required packages:
 
 ```bash
 pip install -r requirements.txt
@@ -69,22 +69,22 @@ pip install -r requirements.txt
 
 ---
 
-## 💻 Avvio dell'Applicazione
+## 💻 Running the Application
 
-Puoi avviare l'interfaccia grafica direttamente dalla radice del progetto:
+Launch the modern graphical interface directly from the repository root:
 
 ```bash
 python main.py
 ```
 
-Oppure avviando direttamente il modulo della GUI:
+Or run the GUI module directly:
 
 ```bash
 python Stages/gui.py
 ```
 
-Dall'interfaccia potrai:
-1. Selezionare il file di configurazione del personale e dei turni (disponibili nella cartella `Stages/configs/`).
-2. Avviare la pipeline e osservare in tempo reale lo stato degli agenti.
-3. Ispezionare la matrice dei turni generata, con evidenziazione grafica dei turni (Mattina, Pomeriggio, Notte, Riposo).
-4. Esaminare le metriche di equità e il punteggio di soddisfazione individuale di ciascun lavoratore.
+### Key GUI Features:
+1. **Config Selection**: Load operational parameters and worker files from `Stages/configs/`.
+2. **Real-time Pipeline**: Monitor agent status, step-by-step logs, and execution time.
+3. **Interactive Roster Grid**: View and inspect monthly assignments color-coded by shift type (Morning, Afternoon, Night, Off).
+4. **Fairness Analytics**: Examine fairness indices, Gini coefficient improvements, and individual worker satisfaction breakdowns.

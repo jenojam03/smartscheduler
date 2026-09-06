@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 # Assicura che la directory Stages sia nel sys.path
-STAGES_DIR = Path(__file__).resolve().parent / "Stages"
+STAGES_DIR = Path(__file__).resolve().parent
 if str(STAGES_DIR) not in sys.path:
     sys.path.insert(0, str(STAGES_DIR))
 
