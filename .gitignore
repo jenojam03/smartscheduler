@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Scratch directory & temporary testing images/scripts
+scratch/
+
+# Testing files
+Stages/test_*.py
+test_*.py
+
+# Generated schedule outputs / experimental results
+final_schedule_*.py
+generated_schedule_*.py
+
+# Project report / relation
+RELAZIONE_PROGETTO.md
+*.docx
+*.pdf
+
+# Worker cache and state
+.worker_cache.json
+Stages/.worker_cache.json
+*.cache
+.cache/
+.pytest_cache/
+
+# Environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDEs and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

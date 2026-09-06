@@ -1,0 +1,34 @@
+# ==============================================================================
+# HOSPITAL SCHEDULING MODEL DRAFT SPECIFICATION (USE CASE B)
+# ==============================================================================
+
+[HORIZON]
+start_date = 07-12-2026
+end_date = 06-01-2027
+public_holidays = 08-12-2026, 25-12-2026, 26-12-2026, 01-01-2027, 06-01-2027
+
+[WORKERS]
+scenario_type = B
+num_standard_workers = 13
+num_specialized_workers = 7
+
+[AVAILABLE_SHIFTS]
+shifts = morning, afternoon, night
+# Pesi turni equivalenti (ad es. notte vale 2 turni)
+shift_weights = morning:1, afternoon:1, night:2
+
+[HARD_CONSTRAINTS_LEGAL]
+# Requisiti di copertura minima per turno
+min_workers_per_shift = 2
+min_specialized_per_shift = 1
+
+# Limiti orari e contrattuali
+max_consecutive_working_days = 6
+exact_monthly_equivalent_shifts = 25
+max_weekly_working_hours = 36
+shift_duration_hours = 6
+
+# Periodi di riposo obbligatori per legge
+mandatory_rest_days_after_night = 2
+one_shift_per_day = true
+no_consecutive_shifts = true
