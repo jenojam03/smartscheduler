@@ -26,6 +26,7 @@ def show_schedule_window(
                     "worker_id": profile.worker_id,
                     "nights": sum(1 for d in range(horizon.total_days) if schedule_matrix[i][d] == 2),
                     "holidays": sum(1 for d in horizon.holiday_indices if schedule_matrix[i][d] is not None),
+                    "weekends": sum(1 for d in horizon.weekend_indices if schedule_matrix[i][d] is not None),
                     "score": satisfaction_scores[i]
                 }
                 for i, profile in enumerate(worker_profiles)

@@ -77,8 +77,8 @@ class SchedulingHorizon:
         
         self.date_to_index: Dict[str, int] = {}
         self.index_to_date: Dict[int, str] = {}
-        self.holiday_indices: Set[int] = set()         # weekend + festività nazionali
-        self.public_holiday_indices: Set[int] = set()  # solo festività nazionali (senza weekend puri)
+        self.holiday_indices: Set[int] = set()         # solo festività nazionali
+        self.weekend_indices: Set[int] = set()         # solo Sabato e Domenica
         
         self._build_calendar()
 
@@ -93,13 +93,12 @@ class SchedulingHorizon:
             is_weekend = curr.weekday() in (5, 6)
             is_public_holiday = d_str in self.public_holidays
 
-            # holiday_indices: weekend E festività nazionali (usato per copertura e penalty festivi)
-            if is_weekend or is_public_holiday:
-                self.holiday_indices.add(idx)
-            # public_holiday_indices: SOLO festività nazionali (Capodanno, Natale, ecc.)
-            # NON include i normali weekend; usato per il calcolo dei turni stancanti consecutivi
+            # weekend_indices: solo Sabato e Domenica
+            if is_weekend:
+                self.weekend_indices.add(idx)
+            # holiday_indices: solo festività nazionali (Capodanno, Natale, ecc.)
             if is_public_holiday:
-                self.public_holiday_indices.add(idx)
+                self.holiday_indices.add(idx)
 
             curr += timedelta(days=1)
             idx += 1

@@ -29,21 +29,28 @@ class ShiftTolerance(BaseModel):
         default_factory=list,
         description="Tipologie di turno sgradite verso cui si ha bassa tolleranza (es. night)"
     )
-    # 2. Festività / Weekend
+    # 2. Festività nazionali
     max_tolerated_holidays: Optional[int] = Field(
         default=None,
-        description="Massimo numero di turni festivi/weekend che il lavoratore tollera di svolgere nel mese."
-        "Se questa soglia viene superata, ogni violazione genera una penalità progressiva."
-        "None = nessun limite; 0 = non tollera nessun turno festivo/weekend."
+        description="Massimo numero di turni in giorni di festività nazionale che il lavoratore tollera. "
+        "NON include i weekend normali (vedi max_tolerated_weekends). "
+        "None = nessun limite; 0 = non tollera nessun turno festivo."
     )
-    # 3. Turni di notte
+    # 3. Weekend (Sabato e Domenica)
+    max_tolerated_weekends: Optional[int] = Field(
+        default=None,
+        description="Massimo numero di turni nei weekend (Sabato e Domenica) che il lavoratore tollera. "
+        "NON include le festività nazionali (vedi max_tolerated_holidays). "
+        "None = nessun limite; 0 = non tollera nessun turno nel weekend."
+    )
+    # 4. Turni di notte
     max_tolerated_nights: Optional[int] = Field(
         default=None,
         description="Massimo numero di turni di notte che il lavoratore tollera di svolgere nel mese."
         "Se questa soglia viene superata, ogni violazione genera una penalità progressiva."
         "None = nessun limite; 0 = non tollera nessun turno di notte."
     )
-    # 4. Pattern consecutivi impegnativi
+    # 5. Pattern consecutivi impegnativi
     max_tolerated_consecutive_demanding_shifts: Optional[int] = Field(
         default=None,
         description=(
@@ -56,12 +63,12 @@ class ShiftTolerance(BaseModel):
             "None = nessun limite; 0 = non tollera nessuna sequenza stancante consecutiva."
         )
     )
-    # 5. Coperture di emergenza
+    # 6. Coperture di emergenza
     emergency_coverage_limit: Optional[int] = Field(
         default=None,
         description="Numero massimo di coperture di emergenza che il lavoratore può fare nell'arco di tempo"
     )
-    # 6. Campo aperto per ulteriori casistiche descritte testualmente
+    # 7. Campo aperto per ulteriori casistiche descritte testualmente
     other_undesirable_patterns: List[str] = Field(
         default_factory=list,
         description="Eventuali ulteriori vincoli o pattern sgraditi non coperti dai campi precedenti"
@@ -73,14 +80,30 @@ class ShiftTolerance(BaseModel):
         if isinstance(data, dict):
             disliked = data.get("disliked_shift_types", [])
             if isinstance(disliked, list):
-                # Se l'LLM ha inserito 'holiday' o 'weekend' tra i turni sgraditi,
+                def _val(item: Any) -> str:
+                    return (item.value if hasattr(item, "value") else str(item)).lower().strip()
+
+                # Se l'LLM ha inserito 'holiday' tra i turni sgraditi,
                 # lo converte in max_tolerated_holidays = 0 se non già impostato
-                if any(str(x).lower().strip() in ("holiday", "holidays", "weekend", "weekends") for x in disliked):
+                if any(_val(x) in ("holiday", "holidays", "festivo", "festivi", "festa", "feste") for x in disliked):
                     if data.get("max_tolerated_holidays") is None:
                         data["max_tolerated_holidays"] = 0
+
+                # Se l'LLM ha inserito 'weekend' tra i turni sgraditi,
+                # lo converte in max_tolerated_weekends = 0 se non già impostato
+                if any(_val(x) in ("weekend", "weekends", "fine settimana") for x in disliked):
+                    if data.get("max_tolerated_weekends") is None:
+                        data["max_tolerated_weekends"] = 0
+
+                # Se nei turni sgraditi c'è night, pone max_tolerated_nights = 0 se non già specificato
+                if any(_val(x) in ("night", "shifttype.night", "notte", "notti", "notturno", "notturni") for x in disliked):
+                    if data.get("max_tolerated_nights") is None:
+                        data["max_tolerated_nights"] = 0
+
                 # Mantiene solo i turni di lavoro validi (morning, afternoon, night)
+                valid_shifts = ("morning", "afternoon", "night", "shifttype.morning", "shifttype.afternoon", "shifttype.night")
                 data["disliked_shift_types"] = [
-                    x for x in disliked if str(x).lower().strip() in ("morning", "afternoon", "night")
+                    x for x in disliked if _val(x) in valid_shifts
                 ]
         return data
 

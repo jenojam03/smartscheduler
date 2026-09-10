@@ -12,6 +12,14 @@ Interfaccia moderna con CustomTkinter ispirata all'app React:
 
 import sys
 import os
+
+if sys.platform.startswith("win"):
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("unical.smartscheduler.hospital.scheduler.v1")
+    except Exception:
+        pass
+
 import threading
 import queue
 import time
@@ -296,12 +304,51 @@ def get_shift_tile(text: str, bg_color: str, fg_color: str, is_holiday: bool = F
     return tk_img
 
 
+def _apply_win32_icon_handles(root: ctk.CTk, ico_path_str: str) -> None:
+    """Invia esplicitamente i messaggi WM_SETICON (ICON_BIG e ICON_SMALL) tramite Win32 API per la taskbar di Windows."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x0010
+        LR_DEFAULTSIZE = 0x0040
+
+        LoadImageW = ctypes.windll.user32.LoadImageW
+        LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        LoadImageW.restype = wintypes.HANDLE
+
+        SendMessageW = ctypes.windll.user32.SendMessageW
+        SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        SendMessageW.restype = wintypes.LPARAM
+
+        # Carica l'icona a 32x32 per la barra delle applicazioni (ICON_BIG) e 16x16 per la barra del titolo (ICON_SMALL)
+        hicon_big = LoadImageW(None, ico_path_str, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+        if not hicon_big:
+            hicon_big = LoadImageW(None, ico_path_str, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE)
+        hicon_small = LoadImageW(None, ico_path_str, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+
+        hwnd = root.winfo_id()
+        parent_hwnd = ctypes.windll.user32.GetParent(hwnd)
+        hwnds = [h for h in (hwnd, parent_hwnd) if h]
+
+        for h in hwnds:
+            if hicon_big:
+                SendMessageW(h, WM_SETICON, ICON_BIG, hicon_big)
+            if hicon_small:
+                SendMessageW(h, WM_SETICON, ICON_SMALL, hicon_small)
+    except Exception:
+        pass
+
+
 def apply_app_icon(root: ctk.CTk) -> None:
-    """Configura l'icona dell'applicazione per la finestra e la barra delle applicazioni (Windows)."""
+    """Configura l'icona dell'applicazione per la finestra e la barra delle applicazioni (Windows / Linux / macOS)."""
     if sys.platform.startswith("win"):
         try:
             import ctypes
-            # Imposta un AppUserModelID esplicito affinché Windows associ l'icona alla barra delle applicazioni
             app_id = "unical.smartscheduler.hospital.scheduler.v1"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
         except Exception:
@@ -323,22 +370,52 @@ def apply_app_icon(root: ctk.CTk) -> None:
         if png.is_file() and icon_png is None:
             icon_png = png
 
-    if icon_ico and icon_ico.is_file():
-        try:
-            root.iconbitmap(default=str(icon_ico))
-        except Exception:
+    # ── WINDOWS ─────────────────────────────────────────────────────────────
+    if sys.platform.startswith("win"):
+        if icon_ico and icon_ico.is_file():
+            ico_path_str = str(icon_ico.resolve())
+            try:
+                root.iconbitmap(ico_path_str)
+            except Exception:
+                try:
+                    root.iconbitmap(default=ico_path_str)
+                except Exception:
+                    pass
+
+            # Assicura HWND valido ed imposta esplicitamente l'HICON sulla Taskbar
+            try:
+                root.update_idletasks()
+            except Exception:
+                pass
+            _apply_win32_icon_handles(root, ico_path_str)
+            # Re-invia subito dopo il mapping della finestra per prevenire reset da parte di Windows
+            try:
+                root.after(150, lambda: _apply_win32_icon_handles(root, ico_path_str))
+            except Exception:
+                pass
+
+        elif icon_png and icon_png.is_file():
+            try:
+                photo = ImageTk.PhotoImage(Image.open(str(icon_png)))
+                root.iconphoto(True, photo)
+                root._app_icon_photo_ref = photo
+            except Exception:
+                pass
+
+    # ── LINUX / MACOS ───────────────────────────────────────────────────────
+    else:
+        if icon_png and icon_png.is_file():
+            try:
+                photo = ImageTk.PhotoImage(Image.open(str(icon_png)))
+                root.iconphoto(True, photo)
+                root._app_icon_photo_ref = photo
+            except Exception:
+                pass
+        elif icon_ico and icon_ico.is_file():
             try:
                 root.iconbitmap(str(icon_ico))
             except Exception:
                 pass
-
-    if icon_png and icon_png.is_file():
-        try:
-            photo = ImageTk.PhotoImage(Image.open(str(icon_png)))
-            root.iconphoto(False, photo)
-            root._app_icon_photo_ref = photo  # Mantieni il riferimento per evitare garbage collection
-        except Exception:
-            pass
 
 
 # ─────────────────────────────────────────────
@@ -791,41 +868,6 @@ class SmartSchedulerGUI:
             node["circle_canvas"]._circ_img = circ_img
             node["line_canvas"].itemconfig("connector", fill=C["line_error"])
 
-    def _log_worker_card(self, node: Dict, p: FormalizedWorkerProfile):
-        """Append worker preferences in neutral gray with non-bold worker name."""
-        lt = node["log_text"]
-        lt.configure(state="normal")
-        raw = p.raw_preference
-
-        pref = [s.value for s in raw.preferred_shifts] if raw.preferred_shifts else ["Nessuno"]
-        dis = [s.value for s in raw.shift_tolerance.disliked_shift_types] if raw.shift_tolerance.disliked_shift_types else ["Nessuno"]
-        unav = raw.availability.unavailable_days if raw.availability.unavailable_days else ["Nessuno"]
-        rest = raw.availability.preferred_rest_days if raw.availability.preferred_rest_days else ["Nessuno"]
-
-        nt = raw.shift_tolerance.night_tolerance
-        night_val = nt.value if hasattr(nt, "value") else str(nt or "Normale")
-        ht = raw.shift_tolerance.holiday_shifts_tolerance
-        hol_val = ht.value if hasattr(ht, "value") else str(ht or "Normale")
-
-        # Worker name: gray, NOT BOLD
-        lt.insert("end", f"   {p.worker_id}: ", "worker_name")
-
-        # Details: soft gray
-        details = (
-            f"Pref: {', '.join(pref)}  ·  "
-            f"Non graditi: {', '.join(dis)}  ·  "
-            f"Indisponibilità: {', '.join(unav)}  ·  "
-            f"Riposo pref: {', '.join(rest)}  ·  "
-            f"Toll. notti: {night_val}  ·  "
-            f"Toll. festivi: {hol_val}\n"
-        )
-        lt.insert("end", details, "worker_details")
-
-        lines = int(lt.index("end-1c").split(".")[0])
-        lt.configure(height=min(lines + 1, 40))
-        lt.see("end")
-        lt.configure(state="disabled")
-
     def _insert_inline_markdown(self, text_widget: tk.Text, text: str):
         """Format inline bold **text** within a line."""
         parts = text.split("**")
@@ -927,9 +969,11 @@ class SmartSchedulerGUI:
 
         night_tol = getattr(raw.shift_tolerance, "max_tolerated_nights", None)
         hol_tol = getattr(raw.shift_tolerance, "max_tolerated_holidays", None)
+        weekend_tol = getattr(raw.shift_tolerance, "max_tolerated_weekends", None)
 
         night_str = "nessuna notte (0)" if night_tol == 0 else (f"max {night_tol}" if night_tol is not None else "nessun limite")
         hol_str = "nessun festivo (0)" if hol_tol == 0 else (f"max {hol_tol}" if hol_tol is not None else "nessun limite")
+        weekend_str = "nessun weekend (0)" if weekend_tol == 0 else (f"max {weekend_tol}" if weekend_tol is not None else "nessun limite")
 
         p_str = ", ".join(pref_shifts) if pref_shifts else "nessuno"
         d_str = ", ".join(disliked_shifts) if disliked_shifts else "nessuno"
@@ -938,7 +982,7 @@ class SmartSchedulerGUI:
 
         lt.insert("end", f"      • Turni: preferiti=[{p_str}]  sgraditi=[{d_str}]\n", "worker_details")
         lt.insert("end", f"      • Calendario: indisponibile=[{u_str}]  riposo preferito=[{r_str}]\n", "worker_details")
-        lt.insert("end", f"      • Tolleranze: notti={night_str}  festivi={hol_str}\n\n", "worker_details")
+        lt.insert("end", f"      • Tolleranze: notti={night_str}  festivi={hol_str}  weekend={weekend_str}\n\n", "worker_details")
 
         # Auto-expand height
         lines = int(lt.index("end-1c").split(".")[0])
@@ -1367,12 +1411,12 @@ class SmartSchedulerGUI:
         tbl = ctk.CTkFrame(dist_card, fg_color="transparent")
         tbl.pack(fill="x", padx=24, pady=(0, 20))
 
-        headers = ["Lavoratore", "Notti", "Festivi", "Score"]
+        headers = ["Lavoratore", "Notti", "Festivi", "Weekend", "Score"]
         hdr_frame = ctk.CTkFrame(tbl, fg_color=C["surface2"], corner_radius=8)
         hdr_frame.pack(fill="x", pady=(0, 8))
 
         for i, h in enumerate(headers):
-            w_size = 240 if i == 0 else 130
+            w_size = 210 if i == 0 else 105
             ctk.CTkLabel(hdr_frame, text=h, font=ctk.CTkFont(family=FONT_TITLE, size=15, weight="bold"),
                          text_color=C["text"], width=w_size).pack(side="left", padx=10, pady=10)
 
@@ -1386,13 +1430,15 @@ class SmartSchedulerGUI:
             row_f.pack(fill="x", pady=2)
 
             ctk.CTkLabel(row_f, text=info["worker_id"], font=ctk.CTkFont(family=FONT_BODY, size=14),
-                         text_color=C["text"], width=240, anchor="w").pack(side="left", padx=10, pady=7)
+                         text_color=C["text"], width=210, anchor="w").pack(side="left", padx=10, pady=7)
             ctk.CTkLabel(row_f, text=str(info["nights"]), font=ctk.CTkFont(family=FONT_BODY, size=14),
-                         text_color=C["text"], width=130).pack(side="left", padx=10, pady=7)
+                         text_color=C["text"], width=105).pack(side="left", padx=10, pady=7)
             ctk.CTkLabel(row_f, text=str(info["holidays"]), font=ctk.CTkFont(family=FONT_BODY, size=14),
-                         text_color=C["text"], width=130).pack(side="left", padx=10, pady=7)
+                         text_color=C["text"], width=105).pack(side="left", padx=10, pady=7)
+            ctk.CTkLabel(row_f, text=str(info.get("weekends", 0)), font=ctk.CTkFont(family=FONT_BODY, size=14),
+                         text_color=C["text"], width=105).pack(side="left", padx=10, pady=7)
             ctk.CTkLabel(row_f, text=str(sc), font=ctk.CTkFont(size=14, weight="bold"),
-                         text_color=sc_fg, width=130).pack(side="left", padx=10, pady=7)
+                         text_color=sc_fg, width=105).pack(side="left", padx=10, pady=7)
 
     # ═══════════════════════════════════════════
     #  FOOTER
@@ -1536,7 +1582,6 @@ class SmartSchedulerGUI:
 
             worker_profiles = worker_agent.process_all(
                 lines,
-                max_workers=2,
                 on_progress=_on_worker_progress
             )
 
@@ -1848,7 +1893,7 @@ class SmartSchedulerGUI:
                     tag = "error" if score < 0 else ("warn" if score < 30 else "info")
                     self._node_log(n,
                         f"  {w_info['worker_id']:<12}  Notti={w_info['nights']:>2}"
-                        f"  Festivi={w_info['holidays']:>2}  Score={score:>5}",
+                        f"  Festivi={w_info['holidays']:>2}  Weekend={w_info.get('weekends', 0):>2}  Score={score:>5}",
                         tag)
             self._schedule_ui(_log_distribution)
 

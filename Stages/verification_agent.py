@@ -257,6 +257,9 @@ class SymbolicFairnessVerificationAgent:
                 ),
                 "assigned_holidays": sum(
                     1 for d in self.horizon.holiday_indices if schedule_matrix[idx][d] is not None
+                ),
+                "assigned_weekends": sum(
+                    1 for d in self.horizon.weekend_indices if schedule_matrix[idx][d] is not None
                 )
             }
             for idx in disadvantaged_indices
@@ -281,10 +284,12 @@ class SymbolicFairnessVerificationAgent:
         for w in range(self.num_workers):
             nights   = sum(1 for d in range(self.horizon.total_days) if schedule_matrix[w][d] == night_idx)
             holidays = sum(1 for d in self.horizon.holiday_indices if schedule_matrix[w][d] is not None)
+            weekends = sum(1 for d in self.horizon.weekend_indices if schedule_matrix[w][d] is not None)
             shift_distribution.append({
                 "worker_id": self.worker_profiles[w].worker_id,
                 "nights":    nights,
                 "holidays":  holidays,
+                "weekends":  weekends,
                 "score":     satisfaction_scores[w]
             })
 

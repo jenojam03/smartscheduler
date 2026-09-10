@@ -59,7 +59,8 @@ class WorkerSatisfactionModel:
             model.add(excess_nights >= actual_nights - limit_n)
             satisfaction_terms.append(excess_nights * -15)
 
-        # TOLLERANZA FESTIVI: se supera la soglia, penalità progressiva (-15 per ogni festivo extra)
+        # TOLLERANZA FESTIVI: penalità progressiva (-15 per ogni turno festivo extra)
+        # Usa holiday_indices che ora contiene SOLO le festività nazionali (non i weekend)
         if tol.max_tolerated_holidays is not None:
             limit_h = tol.max_tolerated_holidays
             actual_holidays = sum(
@@ -71,19 +72,35 @@ class WorkerSatisfactionModel:
             model.add(excess_holidays >= actual_holidays - limit_h)
             satisfaction_terms.append(excess_holidays * -15)
 
+        # TOLLERANZA WEEKEND: penalità progressiva (-15 per ogni turno weekend extra)
+        # Usa weekend_indices che contiene SOLO Sabato e Domenica (non le festività nazionali)
+        if tol.max_tolerated_weekends is not None:
+            limit_w = tol.max_tolerated_weekends
+            actual_weekends = sum(
+                shifts[(w, d, s)]
+                for d in self.horizon.weekend_indices
+                for s in range(3)
+            )
+            excess_weekends = model.new_int_var(0, len(self.horizon.weekend_indices) * 3, f"excess_weekends_w{w}")
+            model.add(excess_weekends >= actual_weekends - limit_w)
+            satisfaction_terms.append(excess_weekends * -15)
+
         # TOLLERANZA TURNI FATICOSI CONSECUTIVI:
-        # Un turno è 'stancante' se cade in una notte OPPURE in un giorno festivo/weekend.
+        # Un turno è 'stancante' se cade in una notte OPPURE in un giorno festivo OPPURE in un weekend.
         # Ogni unità oltre la soglia genera -20 di penalità.
         # Nota: max_tolerated_consecutive_demanding_shifts=0 = "nessuna coppia consecutiva tollerata"
         #
         # Tre regole di consecutività (unite senza double-counting):
         #   REGOLA 1 - Notte+Notte:          adiacenti nel calendario (d e d+1, entrambi turno notte)
-        #   REGOLA 2 - Weekend+Weekend:      Sabato e Domenica dello stesso weekend (d e d+1 in holiday_indices)
+        #   REGOLA 2 - Weekend+Weekend:      Sabato e Domenica dello stesso weekend (d e d+1 in weekend_indices)
         #   REGOLA 3 - Festività+Festività:  adiacenti nella sequenza delle sole festività nazionali
         #                                   (es. 26-12 e 01-01: nessuna altra festività tra loro)
         if tol.max_tolerated_consecutive_demanding_shifts is not None:
             limit_c = tol.max_tolerated_consecutive_demanding_shifts
             night_idx = 2  # ShiftType.NIGHT
+
+            # Unione di festività e weekend per determinare i giorni "stancanti"
+            demanding_day_indices = self.horizon.holiday_indices | self.horizon.weekend_indices
 
             # dem[d] = 1 se il giorno d è 'stancante' per il worker w:
             #   - weekend o festività nazionale: stancante se il worker lavora qualsiasi turno
@@ -91,7 +108,7 @@ class WorkerSatisfactionModel:
             demanding = []
             for d in range(self.horizon.total_days):
                 dem = model.new_bool_var(f"dem_w{w}_d{d}")
-                if d in self.horizon.holiday_indices:
+                if d in demanding_day_indices:
                     works_any = model.new_bool_var(f"works_w{w}_d{d}")
                     model.add_bool_or([shifts[(w, d, s)] for s in range(3)]).only_enforce_if(works_any)
                     model.add(sum(shifts[(w, d, s)] for s in range(3)) == 0).only_enforce_if(works_any.negated())
@@ -110,7 +127,7 @@ class WorkerSatisfactionModel:
 
             # REGOLA 3: coppie di festività nazionali adiacenti nella loro sequenza,
             # anche se separate da giorni feriali (es. 26-12 e 01-01)
-            sorted_pub_hol = sorted(self.horizon.public_holiday_indices)
+            sorted_pub_hol = sorted(self.horizon.holiday_indices)
             for i in range(len(sorted_pub_hol) - 1):
                 h1, h2 = sorted_pub_hol[i], sorted_pub_hol[i + 1]
                 if h2 > h1 + 1:
