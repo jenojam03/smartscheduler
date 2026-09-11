@@ -34,8 +34,9 @@ class ScheduleDraftingAgent:
         self.specialized_indices = list(range(self.num_standard, self.num_workers))
 
         # Convenzioni sui turni (da config)
-        self.num_shifts = 3           # morning=0, afternoon=1, night=2
-        # Pesi turni equivalenti: {0: peso_morning, 1: peso_afternoon, 2: peso_night}
+        self.num_shifts = 3
+
+        # Indici dei turni
         self._shift_weights = {
             SHIFT_MAP[sh]: self.config.shift_weights.get(sh, 1)
             for sh in self.config.shifts
@@ -46,13 +47,13 @@ class ScheduleDraftingAgent:
             for sh in self.config.shifts
         }
 
-    # ------------------------------------------------------------------
-    # Costruzione del modello CP-SAT
-    # ------------------------------------------------------------------
+
+    # ------------------------------------------- COSTRUZIONE MODELLO CP-SAT ----------------------------------------
+
     def build_ortools_model(self) -> tuple[cp_model.CpModel, Dict[tuple, Any], List[Any], Any]:
         """
         Costruisce il modello simbolico completo con OR-Tools.
-        Ritorna: (model, shifts, worker_satisfactions, min_satisfaction_var)
+        Restituisce: (model, shifts, worker_satisfactions, min_satisfaction_var)
         """
         model    = cp_model.CpModel()
         num_days = self.horizon.total_days
@@ -69,10 +70,10 @@ class ScheduleDraftingAgent:
                     shifts[(w, d, s)] = model.new_bool_var(f"w{w}_d{d}_s{s}")
 
         # ---------------------------------------------------------
-        # 2. HARD CONSTRAINTS (da config)
+        # 2. HARD CONSTRAINTS (vincoli legali presi da config)
         # ---------------------------------------------------------
 
-        # A. Copertura dei turni (Staffing Requirements)
+        # A. Copertura dei turni
         for d in range(num_days):
             for s in range(self.num_shifts):
                 if self.scenario_type == "A":
@@ -209,9 +210,9 @@ class ScheduleDraftingAgent:
 
         return model, shifts, worker_satisfactions, min_satisfaction
 
-    # ------------------------------------------------------------------
-    # Risoluzione
-    # ------------------------------------------------------------------
+
+    # ------------------------------------- RISOLUZIONE -------------------------------------
+
     def solve_draft(self, time_limit_seconds: int = 30) -> Dict[str, Any]:
         """
         Risolve il modello CP-SAT iniziale e restituisce il piano di schedulazione.
@@ -254,9 +255,9 @@ class ScheduleDraftingAgent:
                 "total_satisfaction": None
             }
 
-    # ------------------------------------------------------------------
-    # Export
-    # ------------------------------------------------------------------
+
+    # ------------------------------------- EXPORT DEL MODELLO CP-SAT -------------------------------------
+
     def export_to_python_file(self, filepath: str = "generated_schedule_model.py"):
         """
         Esporta la specifica OR-Tools del modello in un file Python autonomo,

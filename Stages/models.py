@@ -63,17 +63,9 @@ class ShiftTolerance(BaseModel):
             "None = nessun limite; 0 = non tollera nessuna sequenza stancante consecutiva."
         )
     )
-    # 6. Coperture di emergenza
-    emergency_coverage_limit: Optional[int] = Field(
-        default=None,
-        description="Numero massimo di coperture di emergenza che il lavoratore può fare nell'arco di tempo"
-    )
-    # 7. Campo aperto per ulteriori casistiche descritte testualmente
-    other_undesirable_patterns: List[str] = Field(
-        default_factory=list,
-        description="Eventuali ulteriori vincoli o pattern sgraditi non coperti dai campi precedenti"
-    )
 
+    # Per evitare che Pydantic vada in errore (se l'LLM erroneamente inserisce 'holiday' o 'weekend' tra i
+    # turni sgraditi) traduce l'errore nel campo corretto
     @model_validator(mode="before")
     @classmethod
     def handle_raw_disliked_shifts(cls, data: Any) -> Any:
@@ -85,18 +77,18 @@ class ShiftTolerance(BaseModel):
 
                 # Se l'LLM ha inserito 'holiday' tra i turni sgraditi,
                 # lo converte in max_tolerated_holidays = 0 se non già impostato
-                if any(_val(x) in ("holiday", "holidays", "festivo", "festivi", "festa", "feste") for x in disliked):
+                if any(_val(x) in ("holiday", "holidays") for x in disliked):
                     if data.get("max_tolerated_holidays") is None:
                         data["max_tolerated_holidays"] = 0
 
                 # Se l'LLM ha inserito 'weekend' tra i turni sgraditi,
                 # lo converte in max_tolerated_weekends = 0 se non già impostato
-                if any(_val(x) in ("weekend", "weekends", "fine settimana") for x in disliked):
+                if any(_val(x) in ("weekend", "weekends") for x in disliked):
                     if data.get("max_tolerated_weekends") is None:
                         data["max_tolerated_weekends"] = 0
 
                 # Se nei turni sgraditi c'è night, pone max_tolerated_nights = 0 se non già specificato
-                if any(_val(x) in ("night", "shifttype.night", "notte", "notti", "notturno", "notturni") for x in disliked):
+                if any(_val(x) in ("night", "shifttype.night") for x in disliked):
                     if data.get("max_tolerated_nights") is None:
                         data["max_tolerated_nights"] = 0
 
@@ -115,17 +107,13 @@ class AvailabilityConstraints(BaseModel):
     """
     preferred_rest_days: List[str] = Field(
         default_factory=list,
-        description="Lista di date (formato 'DD-MM-YYYY') in cui il lavoratore preferisce riposare"
+        description="Lista di date (formato 'DD-MM-YYYY') in cui il lavoratore preferisce riposare."
+        "Questo vincolo è trattato come un soft constraint"
     )
     unavailable_days: List[str] = Field(
         default_factory=list,
         description="Lista di date (formato 'DD-MM-YYYY') in cui il lavoratore non è affatto disponibile"
-        "Questo vincolo e' trattato come un hard constraint."
-    )
-    # ESTENSIBILITÀ: per vincoli temporali/presenza atipici
-    other_availability_constraints: List[str] = Field(
-        default_factory=list,
-        description="Eventuali vincoli di disponibilità non coperti dai campi precedenti"
+        "Questo vincolo è trattato come un hard constraint."
     )
 
     # Classe utile alla conversione del formato data. Necessaria per garantire l'uniformità del formato utilizzato
@@ -156,7 +144,8 @@ class WorkerPreference(BaseModel):
         default=None,
         description="Step-by-step reasoning and analysis of the worker input text before extracting the structured fields (Chain of Thought)."
     )
-
+ 
+    # ID 
     worker_id: str = Field(
         default="", 
         description="Identificativo del lavoratore (es. 'Worker 1')"

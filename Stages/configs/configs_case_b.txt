@@ -5,7 +5,6 @@
 [HORIZON]
 start_date = 07-12-2026
 end_date = 06-01-2027
-public_holidays = 08-12-2026, 25-12-2026, 26-12-2026, 01-01-2027, 06-01-2027
 
 [WORKERS]
 scenario_type = B

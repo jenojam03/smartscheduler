@@ -11,9 +11,9 @@ from calendar_manager import SchedulingHorizon
 from satisfaction_model import WorkerSatisfactionModel
 
 
-# ==========================================
-# GESTIONE CACHE PERSISTENTE PREFERENZE
-# ==========================================
+
+# ------------------------------------GESTIONE CACHE PERSISTENTE PREFERENZE  --------------------------------
+# (per test ripetuti evita di dover eseguire nuovamente la fase 1)
 CACHE_FILE = Path(__file__).resolve().parent / ".worker_cache.json"
 _memory_cache: Optional[Dict[str, Any]] = None
 
@@ -50,10 +50,11 @@ def set_cached_preference(text: str, pref_dict: Dict[str, Any]):
     except Exception:
         pass
 
+# ------------------------------------------- PROFILO DEL LAVORATORE ---------------------------------------------
 
 class FormalizedWorkerProfile:
     """
-    Rappresentazione machine-readable che separa:
+    Rappresentazione machine-readable delle preferenze di un infermiere che separa:
     - Hard Constraints
     - Soft Constraints / Preferenze
     - Satisfaction Model
@@ -64,22 +65,22 @@ class FormalizedWorkerProfile:
             wid = f"Worker {worker_idx + 1}"
         elif wid.isdigit():
             wid = f"Worker {wid}"
-        self.worker_id = wid
-        self.worker_idx = worker_idx
+        self.worker_id = wid           #etichetta testuale
+        self.worker_idx = worker_idx   #indice di calcolo (serve a CP-SAT per indicizzare le variabili)
         self.reasoning = pref.reasoning
         self.raw_preference = pref
         self.horizon = horizon
         self.satisfaction_model = WorkerSatisfactionModel(pref, worker_idx, horizon)
         
-        
+        # HARD CONSTRAINTS: giorni di indisponibilità
         self.hard_constraints: Dict[str, Any] = {
             "unavailable_day_indices": [
                 horizon.date_to_index[d] for d in pref.availability.unavailable_days 
-                if horizon.is_date_in_horizon(d) #solo date valide
-            ],
-            "max_emergency_coverage": pref.shift_tolerance.emergency_coverage_limit
+                if horizon.is_date_in_horizon(d)
+            ]
         }
         
+        # SOFT CONTRAINTS: turni preferiti, turni non graditi, preferenza riposi
         self.soft_constraints: Dict[str, Any] = {
             "preferred_shift_indices": [SHIFT_MAP[s] for s in pref.preferred_shifts],
             "disliked_shift_indices": [SHIFT_MAP[s] for s in pref.shift_tolerance.disliked_shift_types],
@@ -99,286 +100,99 @@ class FormalizedWorkerProfile:
                 model.add(shifts[(w, d, s)] == 0)
 
 
-# ==========================================
-# AGENTE PER L'ESTRAZIONE PREFERENZE (STAGE 1)
-# ==========================================
 
-HOLIDAY_NAMES: Dict[str, str] = {
-    "01-01": "Capodanno / New Year's Day",
-    "06-01": "Epifania (Befana) / Epiphany",
-    "25-04": "Festa della Liberazione / Liberation Day",
-    "01-05": "Festa del Lavoro / Labor Day",
-    "02-06": "Festa della Repubblica / Republic Day",
-    "15-08": "Ferragosto / Assumption Day",
-    "01-11": "Ognissanti (Tutti i Santi) / All Saints' Day",
-    "08-12": "Immacolata Concezione / Immaculate Conception",
-    "24-12": "Vigilia di Natale / Christmas Eve",
-    "25-12": "Natale / Christmas Day",
-    "26-12": "Santo Stefano / Boxing Day / St. Stephen's Day",
-    "31-12": "San Silvestro (Vigilia di Capodanno) / New Year's Eve",
-}
-
-
-def format_holidays_for_prompt(horizon: SchedulingHorizon) -> str:
-    """
-    Costruisce una tabella testuale delle festività note che cadono nell'orizzonte corrente,
-    permettendo all'LLM di mappare nomi (es. 'Natale', 'Santo Stefano') alla data esatta DD-MM-YYYY.
-    """
-    lines = []
-    curr = horizon.start_date
-    while curr <= horizon.end_date:
-        d_str = curr.strftime(DATE_FORMAT)
-        dm = curr.strftime("%d-%m")
-        if dm in HOLIDAY_NAMES:
-            lines.append(f"- {HOLIDAY_NAMES[dm]}: {d_str}")
-        elif d_str in horizon.public_holidays:
-            lines.append(f"- Public Holiday (Pasqua/Pasquetta): {d_str}")
-        curr += timedelta(days=1)
-
-    if not lines:
-        return "- No specific public holidays in this horizon."
-    return "\n".join(lines)
-
+#------------------------------------------------ COSTRUZIONE PROMPT -----------------------------------------
 
 def build_prompt_template(horizon: SchedulingHorizon) -> ChatPromptTemplate:
-    holidays_table = format_holidays_for_prompt(horizon)
     system_instructions = f"""You are an expert hospital scheduling assistant.
-Your task is to extract worker shift preferences and constraints into the exact structured schema.
+Extract worker preferences into structured JSON strictly following these rules:
 
-SCHEDULING HORIZON FOR THIS RUN:
-- Start Date: {horizon.start_date_str}
-- End Date: {horizon.end_date_str}
-- Total Days: {horizon.total_days}
-- All dates MUST strictly follow the 'DD-MM-YYYY' format.
+SCHEDULING HORIZON:
+- Dates: from {horizon.start_date_str} to {horizon.end_date_str} ({horizon.total_days} days). Format: 'DD-MM-YYYY'.
 
-CALENDAR & NAMED HOLIDAYS IN THIS HORIZON (LOOKUP TABLE):
-{holidays_table}
+CORE RULES:
+1. preferred_shifts: ONLY shifts explicitly preferred ('I prefer morning', 'I like afternoon'). If the worker only states dislikes/avoidances and NO preference, preferred_shifts MUST BE EMPTY ([]).
+2. DATE CLASSIFICATION (MUTUALLY EXCLUSIVE):
+   - unavailable_days (HARD): Strict impossibility ('cannot work', 'unavailable', 'impossible', 'not available').
+   - preferred_rest_days (SOFT): Desired time off ('I want off', 'I request off', 'need as a rest day', 'would like off').
+3. shift_tolerance:
+   - disliked_shift_types: Shift types they avoid (ONLY from ['morning', 'afternoon', 'night']). Never put 'holiday' or 'weekend' here.
+   - max_tolerated_nights: Integer limit on night shifts. 0 if they avoid/hate nights; null if no limit stated.
+   - max_tolerated_holidays: Integer limit on public holidays. 0 if they avoid/hate holiday shifts; null if no limit stated.
+   - max_tolerated_weekends: Integer limit on weekend shifts. 0 if they avoid/hate weekend shifts; null if no limit stated.
+   - max_tolerated_consecutive_demanding_shifts: Integer limit on consecutive demanding shifts; null if not stated.
+4. ANTI-HALLUCINATION:
+   - NEVER invent preferred shifts: if not mentioned, preferred_shifts must be [].
+   - NEVER invent numeric limits: max_tolerated_* MUST be null unless explicitly stated (e.g. 'at most N', 'up to N', or 'avoid' -> 0).
+   - A date in unavailable_days or preferred_rest_days does NOT set max_tolerated_holidays or max_tolerated_weekends.
+   - If a worker prefers a shift type, it can NEVER be in disliked_shift_types.
 
-═══════════════════════════════════════════
-CRITICAL RULES (FOLLOW EXACTLY):
-═══════════════════════════════════════════
+REASONING PROTOCOL:
+In 'reasoning', concisely write:
+- Preferred shifts (or 'none' -> [])
+- Date classification (HARD vs SOFT)
+- Tolerances (numeric limits or avoidance; null otherwise)
+- Contradiction check
 
-RULE 1 - preferred_shifts:
-ONLY include shift types explicitly marked with preference verbs (e.g. 'I prefer morning', 'I like afternoon').
-If none stated, leave EMPTY ([]).
+EXAMPLES:
 
-RULE 2 - DATE CLASSIFICATION (HARD vs SOFT) - READ CAREFULLY:
-These two categories are MUTUALLY EXCLUSIVE for the same date:
-  - 'unavailable_days' (HARD): ONLY for strict impossibility. Trigger words: 'cannot work', 'unavailable', 'impossible', 'completely unavailable'.
-  - 'preferred_rest_days' (SOFT): For wishes and requests. Trigger words: 'I want a rest day', 'I request off', 'I would like off', 'I need as a rest day', 'I want ... off'.
-  CRITICAL: 'I want a rest day on X', 'I request X off', 'I need X as a rest day' are ALL SOFT constraints -> preferred_rest_days. ONLY 'cannot work' / 'unavailable' / 'impossible' go to unavailable_days.
-
-RULE 3 - NAMED HOLIDAYS RESOLUTION:
-When a worker mentions a holiday by name (e.g. 'Natale', 'Christmas', 'Capodanno'), resolve it to the exact DD-MM-YYYY date using the lookup table above, then classify it per RULE 2.
-
-RULE 4 - shift_tolerance FIELDS:
-  - 'disliked_shift_types': ONLY from ['morning', 'afternoon', 'night']. NEVER put 'holiday' or 'weekend' here.
-  - 'max_tolerated_nights': integer limit on night shifts. Use 0 ONLY if worker explicitly says they hate/avoid nights. null if no limit stated.
-  - 'max_tolerated_holidays': integer limit on PUBLIC HOLIDAY shifts (Natale, Capodanno, Pasqua, etc.). Use 0 ONLY if worker explicitly says they hate/want to avoid holiday/festive shifts. null if no limit stated. This does NOT include normal weekends.
-  - 'max_tolerated_weekends': integer limit on WEEKEND shifts (Saturday and Sunday). Use 0 ONLY if worker explicitly says they hate/want to avoid weekend shifts. null if no limit stated. This does NOT include public holidays.
-  - 'max_tolerated_consecutive_demanding_shifts': integer limit on consecutive demanding shifts. null if not mentioned.
-
-═══════════════════════════════════════════
-ANTI-HALLUCINATION RULES (MANDATORY):
-═══════════════════════════════════════════
-
-AH-1: NEVER INVENT NUMERIC LIMITS.
-  max_tolerated_nights and max_tolerated_holidays MUST be null unless the worker EXPLICITLY states a numeric limit using words like 'at most N', 'up to N', 'maximum N', 'no more than N', 'I can tolerate N'.
-  Requesting a specific date off (e.g. 'I want a rest day on 24-12-2026') is ONLY a preferred_rest_day. It does NOT set any max_tolerated field.
-  Having a date that falls on a holiday in unavailable_days does NOT set max_tolerated_holidays or max_tolerated_weekends.
-
-AH-2: NEVER CONTRADICT PREFERENCES.
-  If a worker says 'I prefer night shifts', then night MUST NOT appear in disliked_shift_types, and max_tolerated_nights MUST NOT be 0.
-  If a worker says 'I prefer morning shifts', then morning MUST NOT appear in disliked_shift_types.
-  A preferred shift type can NEVER simultaneously be a disliked shift type.
-
-AH-3: 'avoid holiday shifts' = max_tolerated_holidays = 0, 'avoid weekends' = max_tolerated_weekends = 0.
-  When a worker says 'I want to avoid holiday shifts' or 'I avoid festive shifts', set max_tolerated_holidays = 0.
-  When a worker says 'I want to avoid weekends' or 'I avoid weekend shifts', set max_tolerated_weekends = 0.
-  Do NOT put 'holiday' or 'weekend' in disliked_shift_types (they are not valid shift types).
-
-AH-4: GENERAL AVAILABILITY IS NOT A CONSTRAINT.
-  Statements like 'I can work weekends', 'I can manage holidays' are standard availability. Do NOT add them to any constraint field.
-
-AH-5: WEEKEND vs HOLIDAY DISTINCTION.
-  'weekend' = Saturday and Sunday. 'holiday'/'festivo' = public holidays (Natale, Capodanno, Pasqua, etc.).
-  These are SEPARATE concepts. 'avoid weekends' sets max_tolerated_weekends=0 (NOT max_tolerated_holidays).
-  'avoid holidays/festivi' sets max_tolerated_holidays=0 (NOT max_tolerated_weekends).
-
-AH-6: ROOT JSON OBJECT MANDATE.
-  You MUST always output a complete JSON object containing all root keys: 'reasoning', 'worker_id', 'preferred_shifts', 'availability', 'shift_tolerance'.
-
-═══════════════════════════════════════════
-CHAIN-OF-THOUGHT REASONING PROTOCOL:
-═══════════════════════════════════════════
-Before filling the structured fields, provide step-by-step reasoning in the 'reasoning' field:
-- Step 1 (Identity & Preferences): Identify worker_id and any explicit preferred shifts.
-- Step 2 (Dates): Classify each mentioned date as HARD (unavailable) or SOFT (preferred_rest). Use RULE 2 trigger words.
-- Step 3 (Tolerances): For EACH tolerance field, ask: "Did the worker EXPLICITLY state a numeric limit or avoidance for this?" If NO -> null.
-- Step 4 (Contradiction Check): Verify no preferred shift appears in disliked_shift_types. Verify no numeric limit was invented.
-
-═══════════════════════════════════════════
-FEW-SHOT EXAMPLES:
-═══════════════════════════════════════════
-
-Example 1 (Preferred shift + avoid another + rest day on a holiday date):
-Input: "Worker A: I prefer morning shifts and absolutely avoid night shifts. I want a rest day on 24-12-2026."
+Example 1 (Preferences + Disliked + Soft vs Hard Dates):
+Input: "Worker A: I prefer morning shifts and absolutely avoid night shifts. I want a rest day on 24-12-2026 and cannot work on 31-12-2026."
 Output:
 {{
-  "reasoning": "Step 1: Worker A prefers 'morning'. Step 2: 'I want a rest day on 24-12-2026' -> SOFT -> preferred_rest_days. Step 3: 'absolutely avoid night shifts' -> disliked ['night'], max_tolerated_nights 0. No mention of holiday limits -> max_tolerated_holidays null. No mention of consecutive limits -> null. Step 4: morning is preferred, not in disliked. OK.",
+  "reasoning": "Worker A prefers morning. 'want rest day 24-12-2026' -> SOFT -> preferred_rest_days. 'cannot work 31-12-2026' -> HARD -> unavailable_days. 'avoid night shifts' -> disliked ['night'], max_tolerated_nights 0. No holiday/weekend numeric limits -> null. No contradictions.",
   "worker_id": "Worker A",
   "preferred_shifts": ["morning"],
   "availability": {{
     "preferred_rest_days": ["24-12-2026"],
-    "unavailable_days": [],
-    "other_availability_constraints": []
+    "unavailable_days": ["31-12-2026"]
   }},
   "shift_tolerance": {{
     "disliked_shift_types": ["night"],
     "max_tolerated_nights": 0,
     "max_tolerated_holidays": null,
     "max_tolerated_weekends": null,
-    "max_tolerated_consecutive_demanding_shifts": null,
-    "emergency_coverage_limit": null,
-    "other_undesirable_patterns": []
+    "max_tolerated_consecutive_demanding_shifts": null
   }}
 }}
 
-Example 2 (Prefers night + avoids another shift type):
-Input: "Worker B: I prefer night shifts and I avoid morning shifts."
+Example 2 (Avoidances Only, NO Preferred Shifts):
+Input: "Worker B: I would like to avoid night shifts, holidays, and weekends. I want 25-12-2026 off."
 Output:
 {{
-  "reasoning": "Step 1: Worker B prefers 'night'. Step 2: No dates mentioned. Step 3: 'avoid morning shifts' -> disliked ['morning']. Worker PREFERS nights, so max_tolerated_nights must NOT be 0 -> null. No holiday mention -> null. Step 4: night is preferred and NOT in disliked. OK.",
+  "reasoning": "Worker B states no preferred shifts -> preferred_shifts []. 'want 25-12-2026 off' -> SOFT -> preferred_rest_days ['25-12-2026']. 'avoid night shifts' -> disliked ['night'], max_tolerated_nights 0. 'avoid holidays' -> max_tolerated_holidays 0. 'avoid weekends' -> max_tolerated_weekends 0.",
   "worker_id": "Worker B",
-  "preferred_shifts": ["night"],
-  "availability": {{
-    "preferred_rest_days": [],
-    "unavailable_days": [],
-    "other_availability_constraints": []
-  }},
-  "shift_tolerance": {{
-    "disliked_shift_types": ["morning"],
-    "max_tolerated_nights": null,
-    "max_tolerated_holidays": null,
-    "max_tolerated_weekends": null,
-    "max_tolerated_consecutive_demanding_shifts": null,
-    "emergency_coverage_limit": null,
-    "other_undesirable_patterns": []
-  }}
-}}
-
-Example 3 (Explicit numeric tolerances):
-Input: "Worker C: I prefer morning shifts. I can tolerate at most 3 night shifts and up to 2 holiday shifts."
-Output:
-{{
-  "reasoning": "Step 1: Worker C prefers 'morning'. Step 2: No dates. Step 3: Explicit limits: 'at most 3 night shifts' -> max_tolerated_nights 3. 'up to 2 holiday shifts' -> max_tolerated_holidays 2. disliked_shift_types empty because tolerance is stated, not avoidance. Step 4: OK.",
-  "worker_id": "Worker C",
-  "preferred_shifts": ["morning"],
-  "availability": {{
-    "preferred_rest_days": [],
-    "unavailable_days": [],
-    "other_availability_constraints": []
-  }},
-  "shift_tolerance": {{
-    "disliked_shift_types": [],
-    "max_tolerated_nights": 3,
-    "max_tolerated_holidays": 2,
-    "max_tolerated_weekends": null,
-    "max_tolerated_consecutive_demanding_shifts": null,
-    "emergency_coverage_limit": null,
-    "other_undesirable_patterns": []
-  }}
-}}
-
-Example 4 (Unavailable dates on holidays + avoid nights):
-Input: "Worker D: I cannot work on 31-12-2026 and 01-01-2027. I avoid night shifts and I prefer morning shifts."
-Output:
-{{
-  "reasoning": "Step 1: Worker D prefers 'morning'. Step 2: 'cannot work on 31-12-2026 and 01-01-2027' -> HARD -> unavailable_days. Step 3: 'avoid night shifts' -> disliked ['night'], max_tolerated_nights 0. Having holiday dates in unavailable_days does NOT set max_tolerated_holidays -> null. Step 4: morning is preferred, not in disliked. OK.",
-  "worker_id": "Worker D",
-  "preferred_shifts": ["morning"],
-  "availability": {{
-    "preferred_rest_days": [],
-    "unavailable_days": ["31-12-2026", "01-01-2027"],
-    "other_availability_constraints": []
-  }},
-  "shift_tolerance": {{
-    "disliked_shift_types": ["night"],
-    "max_tolerated_nights": 0,
-    "max_tolerated_holidays": null,
-    "max_tolerated_weekends": null,
-    "max_tolerated_consecutive_demanding_shifts": null,
-    "emergency_coverage_limit": null,
-    "other_undesirable_patterns": []
-  }}
-}}
-
-Example 5 (Named holiday resolution + soft date):
-Input: "Worker E: I prefer morning shifts. I want Natale off and I am completely unavailable on Capodanno."
-Output:
-{{
-  "reasoning": "Step 1: Worker E prefers 'morning'. Step 2: 'I want Natale off' -> SOFT -> preferred_rest_days ['25-12-2026']. 'completely unavailable on Capodanno' -> HARD -> unavailable_days ['01-01-2027']. Step 3: No night/holiday/consecutive limits mentioned -> all null. Step 4: OK.",
-  "worker_id": "Worker E",
-  "preferred_shifts": ["morning"],
-  "availability": {{
-    "preferred_rest_days": ["25-12-2026"],
-    "unavailable_days": ["01-01-2027"],
-    "other_availability_constraints": []
-  }},
-  "shift_tolerance": {{
-    "disliked_shift_types": [],
-    "max_tolerated_nights": null,
-    "max_tolerated_holidays": null,
-    "max_tolerated_weekends": null,
-    "max_tolerated_consecutive_demanding_shifts": null,
-    "emergency_coverage_limit": null,
-    "other_undesirable_patterns": []
-  }}
-}}
-
-Example 6 (Prefers night + avoid holidays and weekends):
-Input: "Worker F: I prefer night shifts but want to avoid holiday shifts and weekends."
-Output:
-{{
-  "reasoning": "Step 1: Worker F prefers 'night'. Step 2: No dates. Step 3: 'avoid holiday shifts' -> max_tolerated_holidays 0. 'avoid weekends' -> max_tolerated_weekends 0. Worker PREFERS nights -> max_tolerated_nights null, night NOT in disliked. Step 4: night is preferred, not disliked. OK.",
-  "worker_id": "Worker F",
-  "preferred_shifts": ["night"],
-  "availability": {{
-    "preferred_rest_days": [],
-    "unavailable_days": [],
-    "other_availability_constraints": []
-  }},
-  "shift_tolerance": {{
-    "disliked_shift_types": [],
-    "max_tolerated_nights": null,
-    "max_tolerated_holidays": 0,
-    "max_tolerated_weekends": 0,
-    "max_tolerated_consecutive_demanding_shifts": null,
-    "emergency_coverage_limit": null,
-    "other_undesirable_patterns": []
-  }}
-}}
-
-Example 7 (Avoid shift type + request date off as SOFT):
-Input: "Worker G: I avoid morning shifts and I request 31-12-2026 off."
-Output:
-{{
-  "reasoning": "Step 1: Worker G has no preferred shifts. Step 2: 'I request 31-12-2026 off' -> SOFT -> preferred_rest_days. Step 3: 'avoid morning shifts' -> disliked ['morning']. No night/holiday/consecutive limits -> all null. Step 4: OK.",
-  "worker_id": "Worker G",
   "preferred_shifts": [],
   "availability": {{
-    "preferred_rest_days": ["31-12-2026"],
-    "unavailable_days": [],
-    "other_availability_constraints": []
+    "preferred_rest_days": ["25-12-2026"],
+    "unavailable_days": []
   }},
   "shift_tolerance": {{
-    "disliked_shift_types": ["morning"],
+    "disliked_shift_types": ["night"],
+    "max_tolerated_nights": 0,
+    "max_tolerated_holidays": 0,
+    "max_tolerated_weekends": 0,
+    "max_tolerated_consecutive_demanding_shifts": null
+  }}
+}}
+
+Example 3 (Explicit Numeric Limits + Night Preference):
+Input: "Worker C: I prefer night shifts. I can tolerate at most 2 holiday shifts and up to 1 weekend shift."
+Output:
+{{
+  "reasoning": "Worker C prefers night -> preferred_shifts ['night'], max_tolerated_nights null. Stated limits: 'at most 2 holiday shifts' -> max_tolerated_holidays 2; 'up to 1 weekend shift' -> max_tolerated_weekends 1. No disliked shifts. No specific dates.",
+  "worker_id": "Worker C",
+  "preferred_shifts": ["night"],
+  "availability": {{
+    "preferred_rest_days": [],
+    "unavailable_days": []
+  }},
+  "shift_tolerance": {{
+    "disliked_shift_types": [],
     "max_tolerated_nights": null,
-    "max_tolerated_holidays": null,
-    "max_tolerated_weekends": null,
-    "max_tolerated_consecutive_demanding_shifts": null,
-    "emergency_coverage_limit": null,
-    "other_undesirable_patterns": []
+    "max_tolerated_holidays": 2,
+    "max_tolerated_weekends": 1,
+    "max_tolerated_consecutive_demanding_shifts": null
   }}
 }}
 ---
@@ -389,154 +203,43 @@ Output:
     ])
 
 
-# ==========================================
-# SANITIZER POST-PARSING (RETE DI SICUREZZA)
-# ==========================================
+# -------------------------------------- SANITIZER POST-PARSING (RETE DI SICUREZZA) -----------------------------------------
+
 def sanitize_parsed_preference(pref: WorkerPreference, raw_text: str) -> WorkerPreference:
     """
-    Rete di sicurezza programmatica che corregge le allucinazioni più comuni
-    dell'LLM dopo il parsing. Applica le stesse regole anti-allucinazione
-    definite nel prompt, ma in modo deterministico e infallibile.
+    Rete di sicurezza programmatica per la consistenza logica:
+    - Risolve conflitti tra turni preferiti e sgraditi
+    - Assicura che la preferenza notturna sia coerente con max_tolerated_nights
+    - Assicura la mutua esclusione tra vincoli HARD (unavailable) e SOFT (preferred rest)
+    - Normalizza il worker_id
     """
-    import re
-    text_lower = raw_text.lower()
     tol = pref.shift_tolerance
 
-    # Verbi comuni di evitamento e limiti
-    avoid_verbs = r"(?:avoid|hate|dislike|evit\w*|odi\w*|senza|no\b|non voglio|vorrei evitare)"
-    limit_verbs = r"(?:tolerate|at most|up to|maximum|no more than|massimo|al massimo|sopportare|tollero|limite)"
-
-    # ─────────────────────────────────────────────────────────────
-    # NOTTI (max_tolerated_nights)
-    # ─────────────────────────────────────────────────────────────
-    night_keywords = ["night", "notte", "notti", "notturno", "notturni"]
-    mentions_night = any(kw in text_lower for kw in night_keywords)
-    avoids_night = any(re.search(rf"{avoid_verbs}.{{0,40}}\b{kw}", text_lower) for kw in ["night", "nott", "notturn"]) or \
-                   any(re.search(rf"\b{kw}.{{0,30}}(?:liber\w*|riposo|off|free)", text_lower) for kw in ["night", "nott", "notturn"]) or \
-                   any(kw in text_lower for kw in ["avoid night", "hate night", "dislike night", "no night", "evitare notte", "evitare notti", "evitare le notti", "odio notte", "odio le notti"])
-
-    has_night_limit = mentions_night and (
-        any(re.search(rf"{limit_verbs}.{{0,30}}\b{kw}", text_lower) for kw in ["night", "nott", "notturn"]) or
-        any(re.search(rf"\b{kw}.{{0,30}}{limit_verbs}", text_lower) for kw in ["night", "nott", "notturn"])
-    )
-
-    # Se il worker preferisce le notti, max_tolerated_nights non può essere 0
-    prefers_night = ShiftType.NIGHT in pref.preferred_shifts
-    if prefers_night:
-        if tol.max_tolerated_nights is not None and tol.max_tolerated_nights == 0:
-            tol.max_tolerated_nights = None
-        # Notte non può essere nei turni sgraditi se è preferita
-        if ShiftType.NIGHT in tol.disliked_shift_types:
-            tol.disliked_shift_types = [s for s in tol.disliked_shift_types if s != ShiftType.NIGHT]
-
-    # Se il testo non menziona né evitamento né un limite numerico esplicito per le notti, forza null
-    if tol.max_tolerated_nights is not None and not avoids_night and not has_night_limit:
-        tol.max_tolerated_nights = None
-
-    # Se nei turni sgraditi c'è night, o il testo evita le notti, pone max_tolerated_nights = 0 se non preferita
-    has_disliked_night = any(
-        s == ShiftType.NIGHT or (s.value if hasattr(s, "value") else str(s)).lower().strip() in ("night", "shifttype.night", "notte", "notti")
-        for s in tol.disliked_shift_types
-    )
-    if (avoids_night or has_disliked_night) and not prefers_night:
-        tol.max_tolerated_nights = 0
-
-    # ─────────────────────────────────────────────────────────────
-    # FESTIVI (max_tolerated_holidays) - RIFERITO SOLO ALLE FESTIVITÀ
-    # ─────────────────────────────────────────────────────────────
-    holiday_keywords = ["holiday", "holidays", "festiv", "vacanz", "festa", "feste"]
-    mentions_holiday = any(kw in text_lower for kw in holiday_keywords)
-    avoids_holiday = any(re.search(rf"{avoid_verbs}.{{0,40}}\b{kw}", text_lower) for kw in ["holiday", "festiv", "festa", "feste"]) or \
-                     any(re.search(rf"\b{kw}.{{0,30}}(?:liber\w*|riposo|off|free)", text_lower) for kw in ["holiday", "festiv", "festa", "feste"]) or \
-                     any(kw in text_lower for kw in ["avoid holiday", "avoid festiv", "hate holiday", "no holiday", "evitare festiv", "evitare i festivi", "evitare i turni festivi", "evitare turni festivi", "odio i festivi"])
-
-    has_holiday_limit = mentions_holiday and (
-        any(re.search(rf"{limit_verbs}.{{0,30}}\b{kw}", text_lower) for kw in ["holiday", "festiv", "festa", "feste"]) or
-        any(re.search(rf"\b{kw}.{{0,30}}{limit_verbs}", text_lower) for kw in ["holiday", "festiv", "festa", "feste"])
-    )
-
-    if tol.max_tolerated_holidays is not None and not avoids_holiday and not has_holiday_limit:
-        tol.max_tolerated_holidays = None
-
-    if avoids_holiday and tol.max_tolerated_holidays is None:
-        tol.max_tolerated_holidays = 0
-
-    # ─────────────────────────────────────────────────────────────
-    # WEEKEND (max_tolerated_weekends) - RIFERITO SOLO AI WEEKEND
-    # ─────────────────────────────────────────────────────────────
-    weekend_keywords = ["weekend", "fine settimana", "sabato", "domenica", "sabati", "domeniche"]
-    mentions_weekend = any(kw in text_lower for kw in weekend_keywords)
-    avoids_weekend = any(re.search(rf"{avoid_verbs}.{{0,40}}\b{kw}", text_lower) for kw in ["weekend", "fine settimana", "sabato", "domenica"]) or \
-                     any(re.search(rf"\b{kw}.{{0,30}}(?:liber\w*|riposo|off|free)", text_lower) for kw in ["weekend", "fine settimana"]) or \
-                     any(kw in text_lower for kw in ["avoid weekend", "avoid weekends", "hate weekend", "no weekend", "no weekends", "evitare weekend", "evitare i weekend", "evitare il weekend", "evitare fine settimana", "odio i weekend", "odio i fine settimana"])
-
-    has_weekend_limit = mentions_weekend and (
-        any(re.search(rf"{limit_verbs}.{{0,30}}\b{kw}", text_lower) for kw in ["weekend", "fine settimana", "sabato", "domenica"]) or
-        any(re.search(rf"\b{kw}.{{0,30}}{limit_verbs}", text_lower) for kw in ["weekend", "fine settimana", "sabato", "domenica"])
-    )
-
-    if tol.max_tolerated_weekends is not None and not avoids_weekend and not has_weekend_limit:
-        tol.max_tolerated_weekends = None
-
-    if avoids_weekend and tol.max_tolerated_weekends is None:
-        tol.max_tolerated_weekends = 0
-
-    # ─────────────────────────────────────────────────────────────
-    # PULIZIA DISLIKED_SHIFT_TYPES
-    # ─────────────────────────────────────────────────────────────
-    # Mantiene solo morning, afternoon, night in disliked_shift_types
-    valid_shifts = {ShiftType.MORNING, ShiftType.AFTERNOON, ShiftType.NIGHT}
-    cleaned_disliked = []
-    for s in tol.disliked_shift_types:
-        s_val = (s.value if hasattr(s, "value") else str(s)).lower().strip()
-        if s_val in ("holiday", "holidays", "festivo", "festivi", "festa", "feste"):
-            if tol.max_tolerated_holidays is None:
-                tol.max_tolerated_holidays = 0
-        elif s_val in ("weekend", "weekends", "fine settimana"):
-            if tol.max_tolerated_weekends is None:
-                tol.max_tolerated_weekends = 0
-        elif s in valid_shifts:
-            cleaned_disliked.append(s)
-        elif s_val in ("morning", "afternoon", "night"):
-            for st in ShiftType:
-                if st.value == s_val:
-                    cleaned_disliked.append(st)
-                    break
-    tol.disliked_shift_types = cleaned_disliked
-
-    # AH-2: Rimuove contraddizioni preferiti/sgraditi
+    # 1. Risoluzione conflitti preferiti vs sgraditi:
+    # Un turno preferito non può mai comparire tra i turni sgraditi
     for pref_st in pref.preferred_shifts:
         if pref_st in tol.disliked_shift_types:
             tol.disliked_shift_types = [s for s in tol.disliked_shift_types if s != pref_st]
 
-    # RULE 2: Corregge date "want/request/need" erroneamente messe in unavailable
-    soft_keywords = ["want", "request", "would like", "prefer", "need as a rest",
-                     "vorrei", "desidero", "richiedo"]
-    hard_keywords = ["cannot", "unavailable", "impossible", "can't", "not available",
-                     "non posso", "indisponibile", "impossibile"]
+    # 2. Coerenza turno notturno:
+    prefers_night = ShiftType.NIGHT in pref.preferred_shifts
+    if prefers_night:
+        if tol.max_tolerated_nights == 0:
+            tol.max_tolerated_nights = None
+        if ShiftType.NIGHT in tol.disliked_shift_types:
+            tol.disliked_shift_types = [s for s in tol.disliked_shift_types if s != ShiftType.NIGHT]
+    elif ShiftType.NIGHT in tol.disliked_shift_types and tol.max_tolerated_nights is None:
+        tol.max_tolerated_nights = 0
 
-    # Se il testo contiene solo keyword "soft" per una data (e nessuna keyword "hard"),
-    # sposta le date da unavailable a preferred_rest
-    has_hard = any(kw in text_lower for kw in hard_keywords)
-    has_soft = any(kw in text_lower for kw in soft_keywords)
-
-    if has_soft and not has_hard and pref.availability.unavailable_days:
-        # Tutte le date dovrebbero essere in preferred_rest_days
-        for d in pref.availability.unavailable_days:
-            if d not in pref.availability.preferred_rest_days:
-                pref.availability.preferred_rest_days.append(d)
-        pref.availability.unavailable_days = []
-
-    # RULE 3: Deduplicazione HARD > SOFT
-    # Se una data è in unavailable_days (HARD), non può stare anche in preferred_rest_days (SOFT).
-    # Il vincolo HARD ha sempre la precedenza.
+    # 3. Deduplicazione HARD > SOFT per le date:
+    # Se una data è in unavailable_days (HARD), non può stare anche in preferred_rest_days (SOFT)
     if pref.availability.unavailable_days and pref.availability.preferred_rest_days:
         hard_set = set(pref.availability.unavailable_days)
         pref.availability.preferred_rest_days = [
             d for d in pref.availability.preferred_rest_days if d not in hard_set
         ]
 
-    # RULE 4: Normalizzazione worker_id (es. "19" -> "Worker 19")
+    # 4. Normalizzazione worker_id (es. "19" -> "Worker 19")
     if pref.worker_id:
         wid_clean = pref.worker_id.strip()
         if wid_clean.isdigit():
@@ -555,7 +258,6 @@ class WorkerAgent:
     delle preferenze di un lavoratore in un FormalizedWorkerProfile.
     Supporta:
     - Cache persistente su disco per abbattere i tempi da 80s a <0.1s sui testi già analizzati.
-    - Riutilizzo della medesima istanza client Ollama per tutte le chiamate.
     - Elaborazione sequenziale dei lavoratori (process_all).
     - Sanitizer post-parsing per correggere le allucinazioni più comuni dell'LLM.
     """
@@ -587,15 +289,6 @@ class WorkerAgent:
         prompt = self.prompt_template.invoke({"input_text": text})
         parsed_pref: WorkerPreference = self.llm.invoke(prompt)
 
-        # Rilevamento risposta vuota/scheletro: se l'LLM ha restituito tutti i
-        # campi ai default (nessun reasoning, nessun preferred_shift, nessun dato),
-        # probabilmente il contesto è stato troncato. Riprova una volta con un
-        # prompt semplificato (senza reasoning) come fallback.
-        if self._is_empty_response(parsed_pref):
-            import logging
-            logging.warning(f"[WorkerAgent] Risposta vuota per Worker {worker_idx + 1}, retry con prompt semplificato...")
-            parsed_pref = self._retry_with_simplified_prompt(text, worker_idx)
-
         # Garanzia che worker_id sia sempre popolato
         if not parsed_pref.worker_id:
             parsed_pref.worker_id = f"Worker {worker_idx + 1}"
@@ -607,58 +300,6 @@ class WorkerAgent:
         set_cached_preference(text, parsed_pref.model_dump(mode="json"))
 
         return FormalizedWorkerProfile(parsed_pref, worker_idx, self.horizon)
-
-    @staticmethod
-    def _is_empty_response(pref: WorkerPreference) -> bool:
-        """Rileva se l'LLM ha restituito una risposta 'scheletro' con tutti i campi ai default."""
-        has_no_reasoning = pref.reasoning is None or pref.reasoning.strip() == ""
-        has_no_shifts = len(pref.preferred_shifts) == 0
-        has_no_dates = (
-            len(pref.availability.preferred_rest_days) == 0
-            and len(pref.availability.unavailable_days) == 0
-        )
-        has_no_tolerance = (
-            len(pref.shift_tolerance.disliked_shift_types) == 0
-            and pref.shift_tolerance.max_tolerated_holidays is None
-            and pref.shift_tolerance.max_tolerated_nights is None
-        )
-        return has_no_reasoning and has_no_shifts and has_no_dates and has_no_tolerance
-
-    def _retry_with_simplified_prompt(self, text: str, worker_idx: int) -> WorkerPreference:
-        """Fallback: prompt compatto senza few-shot examples per rientrare nel contesto."""
-        compact_prompt = f"""Extract worker shift preferences into JSON with these exact keys:
-- "reasoning": string with your step-by-step analysis
-- "worker_id": string (e.g. "Worker 12")
-- "preferred_shifts": list of "morning"/"afternoon"/"night" the worker PREFERS
-- "availability": object with:
-  - "preferred_rest_days": dates they WANT off ("I want", "I request", "I need as rest") in DD-MM-YYYY
-  - "unavailable_days": dates they CANNOT work ("cannot", "unavailable", "impossible") in DD-MM-YYYY
-  - "other_availability_constraints": list of strings
-- "shift_tolerance": object with:
-  - "disliked_shift_types": list of "morning"/"afternoon"/"night" they AVOID (NEVER put "holiday" here)
-  - "max_tolerated_nights": integer or null (null if not explicitly limited)
-  - "max_tolerated_holidays": integer or null (0 if they say "avoid holiday shifts", null otherwise)
-  - "max_tolerated_consecutive_demanding_shifts": integer or null
-  - "emergency_coverage_limit": integer or null
-  - "other_undesirable_patterns": list of strings
-
-RULES:
-- "cannot work" / "unavailable" / "completely unavailable" -> unavailable_days (HARD)
-- "I want a rest day" / "I request off" / "I need as a rest day" -> preferred_rest_days (SOFT)
-- If worker prefers a shift type, it MUST NOT appear in disliked_shift_types
-- Do NOT invent numeric limits. Only set max_tolerated_nights/holidays if explicitly stated.
-
-Worker text: {text}"""
-        retry_llm = ChatOllama(
-            model=self.model_name,
-            temperature=self.temperature,
-            num_ctx=4096
-        ).with_structured_output(WorkerPreference, method="json_mode")
-        try:
-            return retry_llm.invoke(compact_prompt)
-        except Exception:
-            # Ultimo fallback: restituisce un profilo con i campi estratti dal worker_id
-            return WorkerPreference(worker_id=f"Worker {worker_idx + 1}")
 
     def process_all(
         self,
@@ -685,31 +326,4 @@ Worker text: {text}"""
 
         return results
 
-
-# Singleton / cache dell'agente di default per retro-compatibilità
-_default_agent: Optional[WorkerAgent] = None
-_default_agent_horizon: Optional[SchedulingHorizon] = None
-
-
-def get_default_agent(horizon: SchedulingHorizon) -> WorkerAgent:
-    global _default_agent, _default_agent_horizon
-    if _default_agent is None or _default_agent_horizon != horizon:
-        _default_agent = WorkerAgent(horizon)
-        _default_agent_horizon = horizon
-    return _default_agent
-
-
-def process_worker_preference(
-    text: str,
-    worker_idx: int,
-    horizon: SchedulingHorizon,
-    agent: Optional[WorkerAgent] = None
-) -> FormalizedWorkerProfile:
-    """
-    Funzione helper per retro-compatibilità. Riusa automaticamente l'istanza singleton
-    e sfrutta la cache per massimizzare la velocità.
-    """
-    if agent is None:
-        agent = get_default_agent(horizon)
-    return agent.process_preference(text, worker_idx)
 

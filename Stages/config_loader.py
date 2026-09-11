@@ -10,7 +10,6 @@ Formato atteso del file (INI-like con sezioni in []):
 [HORIZON]
 start_date = 07-12-2026
 end_date   = 06-01-2027
-public_holidays = 08-12-2026, 25-12-2026, ...
 
 [WORKERS]
 scenario_type         = A | B
@@ -44,7 +43,6 @@ class SchedulingConfig:
     # ---- HORIZON ----
     start_date: str
     end_date: str
-    public_holidays: Set[str]
 
     # ---- WORKERS ----
     scenario_type: str          # "A" o "B"
@@ -123,7 +121,6 @@ def load_config(config_path: str) -> "SchedulingConfig":
         else:
             raise FileNotFoundError(f"File di configurazione non trovato: {path.resolve()}")
 
-    # configparser richiede almeno un header; usiamo un parser permissivo
     parser = configparser.ConfigParser(
         inline_comment_prefixes=("#", ";"),
         allow_no_value=True,
@@ -142,10 +139,6 @@ def load_config(config_path: str) -> "SchedulingConfig":
     h = parser["HORIZON"]
     start_date = h.get("start_date", "07-12-2026").strip()
     end_date   = h.get("end_date",   "06-01-2027").strip()
-    holidays_raw = h.get("public_holidays", "")
-    public_holidays: Set[str] = {
-        d.strip() for d in holidays_raw.split(",") if d.strip()
-    }
 
     # ---- WORKERS ----
     w = parser["WORKERS"]
@@ -185,7 +178,6 @@ def load_config(config_path: str) -> "SchedulingConfig":
     return SchedulingConfig(
         start_date=start_date,
         end_date=end_date,
-        public_holidays=public_holidays,
         scenario_type=scenario_type,
         num_standard_workers=num_standard_workers,
         num_specialized_workers=num_specialized_workers,

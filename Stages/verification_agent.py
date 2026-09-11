@@ -195,23 +195,6 @@ class HardConstraintVerificationAgent:
                         f"({self.horizon.index_to_date[d]}) nonostante indisponibilita' dichiarata."
                     )
 
-        # -----------------------------------------------------------------
-        # 7. Verifica Limite Coperture di Emergenza (Hard Individuale)
-        # -----------------------------------------------------------------
-        for profile in self.worker_profiles:
-            w = profile.worker_idx
-            max_cov = profile.hard_constraints.get("max_emergency_coverage")
-            if max_cov is not None:
-                total_shifts_assigned = sum(
-                    1 for d in range(num_days) if schedule_matrix[w][d] is not None
-                )
-                if total_shifts_assigned > max_cov:
-                    violations.append(
-                        f"[Emergency Coverage] Worker {w + 1} ({profile.worker_id}): "
-                        f"assegnati {total_shifts_assigned} turni totali, "
-                        f"limite dichiarato {max_cov}."
-                    )
-
         is_valid = len(violations) == 0
         return {
             "is_valid": is_valid,

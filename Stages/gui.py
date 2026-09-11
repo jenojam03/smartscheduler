@@ -37,7 +37,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config_loader import load_config
 from calendar_manager import SchedulingHorizon
-from worker_agent import FormalizedWorkerProfile, WorkerAgent, process_worker_preference
+from worker_agent import FormalizedWorkerProfile, WorkerAgent
 from drafting_agent import ScheduleDraftingAgent
 from verification_agent import HardConstraintVerificationAgent, SymbolicFairnessVerificationAgent
 from refinement_loop import ScheduleRefinementAgent
@@ -1557,7 +1557,7 @@ class SmartSchedulerGUI:
             time.sleep(0.1)
 
             # Horizon
-            horizon = SchedulingHorizon(cfg.start_date, cfg.end_date, public_holidays=cfg.public_holidays)
+            horizon = SchedulingHorizon(cfg.start_date, cfg.end_date)
 
             # ── STAGE 1: LLM Workers ─────────────
             worker_node_ref = [None]

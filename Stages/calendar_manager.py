@@ -59,7 +59,7 @@ class SchedulingHorizon:
     """
     Gestisce dinamicamente il calendario e l'orizzonte temporale fornito in input.
     """
-    def __init__(self, start_date_str: str, end_date_str: str, public_holidays: Optional[Set[str]] = None):
+    def __init__(self, start_date_str: str, end_date_str: str):
         self.start_date = datetime.strptime(start_date_str, DATE_FORMAT)
         self.end_date = datetime.strptime(end_date_str, DATE_FORMAT)
         
@@ -69,16 +69,13 @@ class SchedulingHorizon:
         self.start_date_str = start_date_str
         self.end_date_str = end_date_str
         
-        # Festività: se passate in input (non vuote) usa quelle, altrimenti calcola automaticamente per la finestra temporale
-        if public_holidays:
-            self.public_holidays = set(public_holidays)
-        else:
-            self.public_holidays = generate_public_holidays(self.start_date, self.end_date)
+        # Festività nazionali calcolate automaticamente per la finestra temporale
+        self.public_holidays = generate_public_holidays(self.start_date, self.end_date)
         
         self.date_to_index: Dict[str, int] = {}
         self.index_to_date: Dict[int, str] = {}
-        self.holiday_indices: Set[int] = set()         # solo festività nazionali
-        self.weekend_indices: Set[int] = set()         # solo Sabato e Domenica
+        self.holiday_indices: Set[int] = set()         # festività nazionali
+        self.weekend_indices: Set[int] = set()         # weekend
         
         self._build_calendar()
 
