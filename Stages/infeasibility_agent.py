@@ -1,20 +1,16 @@
-import copy
 from typing import List, Dict, Any, Optional, Set
-from datetime import datetime, timedelta
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from models import WorkerPreference, SHIFT_MAP, DATE_FORMAT
+from models import WorkerPreference
 from calendar_manager import SchedulingHorizon
 from worker_agent import FormalizedWorkerProfile
 from config_loader import SchedulingConfig
 from drafting_agent import ScheduleDraftingAgent
 
 
-# =====================================================================
-# 1. DIAGNOSI SIMBOLICA DELL'INFATTIBILITÀ (Infeasibility Diagnostician)
-# =====================================================================
+# ----------------------------------- 1. DIAGNOSI DELL'INFATTIBILITÀ ---------------------------------------
 
 class InfeasibilityDiagnostician:
     """
@@ -45,7 +41,7 @@ class InfeasibilityDiagnostician:
         conflicting_worker_ids = set()
 
         # -------------------------------------------------------------
-        # A. Controllo Deficit di Personale Giornaliero (Staffing Deficit)
+        # A. Controllo Deficit di Personale Giornaliero
         # -------------------------------------------------------------
         num_shifts = self.config.num_shifts
         required_daily_tot = (
@@ -114,7 +110,7 @@ class InfeasibilityDiagnostician:
                 })
 
         # -------------------------------------------------------------
-        # B. Controllo Sovraccarico Singolo Lavoratore (Over-constrained Worker)
+        # B. Controllo Sovraccarico individuale
         # -------------------------------------------------------------
         worker_capacity_issues = []
         exact_shifts = self.config.exact_monthly_equivalent_shifts
@@ -144,13 +140,13 @@ class InfeasibilityDiagnostician:
         }
 
 
-# =====================================================================
-# 2. SPIEGAZIONE IN LINGUAGGIO NATURALE CON CoT (Infeasibility Explainer)
-# =====================================================================
+
+# --------------------------- 2. SPIEGAZIONE IN LINGUAGGIO NATURALE --------------------------------------
+
 
 class InfeasibilityExplainer:
     """
-    Agente di Spiegazione in Linguaggio Naturale (Stage 2 Fallback).
+    Agente di Spiegazione in Linguaggio Naturale.
     Utilizza un LLM con Chain of Thought per formulare una spiegazione empatica,
     chiara e dettagliata delle ragioni del fallimento per il coordinatore ospedaliero.
     """
@@ -194,6 +190,9 @@ class InfeasibilityExplainer:
         except Exception:
             return self._rule_based_explanation(diagnosis)
 
+
+    # costruisce un report testuale garantendo che l'applicazione non si blocchi mai anche in assenza di 
+    # connessione all'LLM
     def _rule_based_explanation(self, diagnosis: Dict[str, Any]) -> str:
         lines = [
             "==================================================================",
@@ -222,9 +221,8 @@ class InfeasibilityExplainer:
         return "\n".join(lines)
 
 
-# =====================================================================
-# 3. REPLANNING DINAMICO E NEGOZIAZIONE (Dynamic Replanning Agent)
-# =====================================================================
+
+# -------------------------------- 3. REPLANNING DINAMICO E NEGOZIAZIONE --------------------------------------
 
 class DynamicReplanningAgent:
     """
@@ -290,34 +288,29 @@ class DynamicReplanningAgent:
     ) -> List[FormalizedWorkerProfile]:
         """
         Crea una copia dei profili lavoratori dove le indisponibilità tassative (Hard)
-        dei lavoratori specificati (o di tutti i lavoratori in conflitto) vengono convertite
-        in preferenze di riposo (Soft Constraint), permettendo al solver di trovare una soluzione
-        rispettando al massimo la preferenza.
+        dei lavoratori specificati vengono convertite in preferenze di riposo (Soft Constraint),
+        permettendo al solver di trovare una soluzione rispettando al massimo la preferenza.
         """
         relaxed_profiles = []
         target_workers = set(workers_to_relax) if workers_to_relax else set()
 
         for idx, original_profile in enumerate(self.original_profiles):
-            raw_pref = original_profile.raw_preference
             w_id = original_profile.worker_id
 
             if not target_workers or w_id in target_workers:
-                # Clona l'oggetto WorkerPreference
-                pref_dict = raw_pref.model_dump()
-                unavail = list(pref_dict.get("availability", {}).get("unavailable_days", []))
-                rest = list(pref_dict.get("availability", {}).get("preferred_rest_days", []))
+                relaxed_pref = original_profile.raw_preference.model_copy(deep=True)
+                unavail = relaxed_pref.availability.unavailable_days
+                rest = relaxed_pref.availability.preferred_rest_days
 
                 # Sposta le indisponibilità tassative nei giorni di riposo preferiti (Soft)
                 for d in unavail:
                     if d not in rest:
                         rest.append(d)
 
-                pref_dict["availability"]["unavailable_days"] = []
-                pref_dict["availability"]["preferred_rest_days"] = rest
+                relaxed_pref.availability.unavailable_days = []
+                relaxed_pref.availability.preferred_rest_days = rest
 
-                relaxed_pref = WorkerPreference(**pref_dict)
-                relaxed_profile = FormalizedWorkerProfile(relaxed_pref, idx, self.horizon)
-                relaxed_profiles.append(relaxed_profile)
+                relaxed_profiles.append(FormalizedWorkerProfile(relaxed_pref, idx, self.horizon))
             else:
                 relaxed_profiles.append(original_profile)
 

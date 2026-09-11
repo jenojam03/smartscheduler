@@ -84,7 +84,8 @@ class ScheduleRefinementAgent:
         locked_min_satisfaction: int,
         target_worker_idx: Optional[int] = None,
         max_night_gap: int = 2,
-        max_holiday_gap: int = 3,
+        max_holiday_gap: int = 2,
+        max_weekend_gap: int = 3,
         time_limit_seconds: int = 30
     ) -> Dict[str, Any]:
         model, shifts, worker_satisfactions, min_sat_var = self.drafting_agent.build_ortools_model()
@@ -92,13 +93,13 @@ class ScheduleRefinementAgent:
         night_idx = SHIFT_MAP["night"]
         cfg       = self.config
 
-        # Non peggioramento: nessun lavoratore può scendere sotto la soglia minima
+        # NON PEGGIORAMENTO: nessun lavoratore può scendere sotto la soglia minima
         # Il miglioramento della soddisfazione del worker più svantaggiato non deve abbassare
         # la soglia minima di soddisfazione già esistente
         for sat_var in worker_satisfactions:
             model.add(sat_var >= locked_min_satisfaction)
 
-        # 1. Bilanciamento equo dei turni di notte (carico faticoso 1)
+        # 1. Bilanciamento equo dei turni di notte
         night_counts = []
         for w in range(self.num_workers):
             n_nights = model.new_int_var(0, num_days, f"nights_w{w}")
@@ -111,28 +112,53 @@ class ScheduleRefinementAgent:
         model.add_min_equality(min_nights, night_counts)
         model.add(max_nights - min_nights <= max_night_gap)
 
-        # 2. Bilanciamento equo dei turni festivi e weekend (carico faticoso 2)
-        holiday_counts = []
-        for w in range(self.num_workers):
-            h_shifts = model.new_int_var(
-                0, len(self.horizon.holiday_indices) * cfg.num_shifts, f"holidays_w{w}"
-            )
-            model.add(h_shifts == sum(
-                shifts[(w, d, s)]
-                for d in self.horizon.holiday_indices
-                for s in range(cfg.num_shifts)
-            ))
-            holiday_counts.append(h_shifts)
+        # 2. Bilanciamento equo delle festività nazionali
+        if self.horizon.holiday_indices:
+            holiday_counts = []
+            for w in range(self.num_workers):
+                h_shifts = model.new_int_var(
+                    0, len(self.horizon.holiday_indices) * cfg.num_shifts, f"holidays_w{w}"
+                )
+                model.add(h_shifts == sum(
+                    shifts[(w, d, s)]
+                    for d in self.horizon.holiday_indices
+                    for s in range(cfg.num_shifts)
+                ))
+                holiday_counts.append(h_shifts)
 
-        max_holidays = model.new_int_var(
-            0, len(self.horizon.holiday_indices) * cfg.num_shifts, "max_holidays"
-        )
-        min_holidays = model.new_int_var(
-            0, len(self.horizon.holiday_indices) * cfg.num_shifts, "min_holidays"
-        )
-        model.add_max_equality(max_holidays, holiday_counts)
-        model.add_min_equality(min_holidays, holiday_counts)
-        model.add(max_holidays - min_holidays <= max_holiday_gap)
+            max_holidays = model.new_int_var(
+                0, len(self.horizon.holiday_indices) * cfg.num_shifts, "max_holidays"
+            )
+            min_holidays = model.new_int_var(
+                0, len(self.horizon.holiday_indices) * cfg.num_shifts, "min_holidays"
+            )
+            model.add_max_equality(max_holidays, holiday_counts)
+            model.add_min_equality(min_holidays, holiday_counts)
+            model.add(max_holidays - min_holidays <= max_holiday_gap)
+
+        # 3. Bilanciamento equo dei weekend
+        if self.horizon.weekend_indices:
+            weekend_counts = []
+            for w in range(self.num_workers):
+                w_shifts = model.new_int_var(
+                    0, len(self.horizon.weekend_indices) * cfg.num_shifts, f"weekends_w{w}"
+                )
+                model.add(w_shifts == sum(
+                    shifts[(w, d, s)]
+                    for d in self.horizon.weekend_indices
+                    for s in range(cfg.num_shifts)
+                ))
+                weekend_counts.append(w_shifts)
+
+            max_weekends = model.new_int_var(
+                0, len(self.horizon.weekend_indices) * cfg.num_shifts, "max_weekends"
+            )
+            min_weekends = model.new_int_var(
+                0, len(self.horizon.weekend_indices) * cfg.num_shifts, "min_weekends"
+            )
+            model.add_max_equality(max_weekends, weekend_counts)
+            model.add_min_equality(min_weekends, weekend_counts)
+            model.add(max_weekends - min_weekends <= max_weekend_gap)
 
         # Riduzione della disparita' di soddisfazione
         max_sat = model.new_int_var(-10000, 10000, "max_sat")
@@ -142,9 +168,9 @@ class ScheduleRefinementAgent:
 
         total_sat = sum(worker_satisfactions)
 
-        # Nuova funzione obiettivo definita su priorità:
-        # 1. Massimizza la soddisfazione del lavoratore svantaggiato e penalizza la presenza di suoi turni sgraditi (riassegnazione)
-        # 2. Mantiene alto il punteggio minimo generale
+        # Nuova funzione obiettivo definita su 4 priorità:
+        # 1. Massimizza la soddisfazione del lavoratore svantaggiato e scarica i suoi turni sgraditi ad altri
+        # 2. Mantiene alto il punteggio minimo generale (non deve crearsi un lavoratore più disperato)
         # 3. Riduzione del divario tra lavoratore più soddisfatto e meno soddisfatto
         # 4. Aumento della soddisfazione totale
         if target_worker_idx is not None:
@@ -251,7 +277,8 @@ class ScheduleRefinementAgent:
                 locked_min_satisfaction=fairness_eval["min_satisfaction"],
                 target_worker_idx=target_idx,
                 max_night_gap=2,
-                max_holiday_gap=3,
+                max_holiday_gap=2,
+                max_weekend_gap=3,
                 time_limit_seconds=20
             )
 

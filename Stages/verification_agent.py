@@ -7,7 +7,8 @@ from config_loader import SchedulingConfig
 SHIFT_HOURS = {0: 6, 1: 6, 2: 12, None: 0}
 SHIFT_UNITS = {0: 1, 1: 1, 2: 2, None: 0}     
 
-# NOTA: il vincolo sui turni consecutivi non è stato implementato perchè soddisfatto automaticamente dai vincoli:
+# NOTA: il vincolo sui turni consecutivi non è stato implementato perchè soddisfatto automaticamente dai 
+# vincoli:
 # - al più un turno al giorno
 # - riposo post-notte (almeno 2 giorni liberi dopo ogni turno di notte)
 # Il suo inserimento renderebbe ridondante la logica di verifica.
@@ -168,8 +169,8 @@ class HardConstraintVerificationAgent:
                             f"[One-Shift] Worker {w + 1}: piu' di un turno assegnato al giorno {d + 1}."
                         )
 
-        # -----------------------------------------------------------------
-        # 5b. Verifica Nessun Turno Consecutivo (No Consecutive Shifts)
+        '''# -----------------------------------------------------------------
+        # 5b. Verifica Nessun Turno Consecutivo
         # Controlla che nessun lavoratore copra turni cronologicamente consecutivi:
         # - Notte (2) al giorno d e Mattina (0) al giorno d+1
         # -----------------------------------------------------------------
@@ -181,10 +182,10 @@ class HardConstraintVerificationAgent:
                             f"[Consecutive Shifts] Worker {w + 1}: turno di Notte al giorno {d + 1} "
                             f"({self.horizon.index_to_date[d]}) seguito consecutivamente da turno di Mattina "
                             f"al giorno {d + 2} ({self.horizon.index_to_date[d + 1]})."
-                        )
+                        )'''
 
         # -----------------------------------------------------------------
-        # 6. Verifica Indisponibilita' Assolute (Hard Individuali)
+        # 6. Verifica Indisponibilita' Assolute
         # -----------------------------------------------------------------
         for profile in self.worker_profiles:
             w = profile.worker_idx
@@ -208,11 +209,11 @@ class HardConstraintVerificationAgent:
 
 class SymbolicFairnessVerificationAgent:
     """
-    Symbolic Fairness Verification Agent per la quantificazione dell'equita' distributiva.
+    Symbolic Fairness Verification Agent per la quantificazione della fairness.
     Calcola:
-    - Identificazione del lavoratore piu' svantaggiato (Most Disadvantaged Worker)
+    - Identificazione del lavoratore piu' svantaggiato
     - Statistiche di distribuzione (Min, Max, Media, Std Dev)
-    - Indice di Gini (disuguaglianza tra i punteggi di soddisfazione)
+    - Indice di Gini (esprime la disuguaglianza tra i punteggi di soddisfazione)
     - Distribuzione dei turni gravosi (notti e festivi assegnati per lavoratore)
     """
 
