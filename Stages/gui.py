@@ -372,6 +372,16 @@ def apply_app_icon(root: ctk.CTk) -> None:
 
     # ── WINDOWS ─────────────────────────────────────────────────────────────
     if sys.platform.startswith("win"):
+        # 1. Imposta iconphoto (aggiorna la Taskbar di Windows istantaneamente)
+        if icon_png and icon_png.is_file():
+            try:
+                photo = ImageTk.PhotoImage(Image.open(str(icon_png.resolve())))
+                root.iconphoto(True, photo)
+                root._app_icon_photo_ref = photo
+            except Exception:
+                pass
+
+        # 2. Imposta iconbitmap e Win32 HICON
         if icon_ico and icon_ico.is_file():
             ico_path_str = str(icon_ico.resolve())
             try:
@@ -382,23 +392,13 @@ def apply_app_icon(root: ctk.CTk) -> None:
                 except Exception:
                     pass
 
-            # Assicura HWND valido ed imposta esplicitamente l'HICON sulla Taskbar
             try:
                 root.update_idletasks()
             except Exception:
                 pass
             _apply_win32_icon_handles(root, ico_path_str)
-            # Re-invia subito dopo il mapping della finestra per prevenire reset da parte di Windows
             try:
                 root.after(150, lambda: _apply_win32_icon_handles(root, ico_path_str))
-            except Exception:
-                pass
-
-        elif icon_png and icon_png.is_file():
-            try:
-                photo = ImageTk.PhotoImage(Image.open(str(icon_png)))
-                root.iconphoto(True, photo)
-                root._app_icon_photo_ref = photo
             except Exception:
                 pass
 
@@ -1250,13 +1250,24 @@ class SmartSchedulerGUI:
             d_str = horizon.index_to_date.get(d, "")
             date_display = d_str[:5].replace("-", "/") if d_str else f"{d+1:02d}"
             is_hol = d in horizon.holiday_indices
-            day_fg = "#F59E0B" if is_hol else "#71717A"
+            is_wknd = d in horizon.weekend_indices
+            
+            if is_hol:
+                day_fg = "#F59E0B"      # Ambra per festività
+                day_bg = "#1F1600"
+            elif is_wknd:
+                day_fg = "#60A5FA"      # Blu/Azzurro chiaro per weekend
+                day_bg = "#0B1528"
+            else:
+                day_fg = "#71717A"
+                day_bg = "#0D0D0D"
+
             lbl = tk.Label(
                 grid_frame,
                 text=date_display,
-                bg="#0D0D0D",
+                bg=day_bg,
                 fg=day_fg,
-                font=(FONT_MONO, f_size, "bold" if is_hol else "normal"),
+                font=(FONT_MONO, f_size, "bold" if (is_hol or is_wknd) else "normal"),
                 width=col_w
             )
             lbl.grid(row=0, column=d, padx=col_pad, pady=(4, 12), sticky="nsew")
@@ -1314,7 +1325,14 @@ class SmartSchedulerGUI:
                 shift_val = matrix[w][d]
                 st = SHIFT_STYLE.get(shift_val, SHIFT_STYLE[None])
                 is_hol = d in horizon.holiday_indices
-                cell_fg = "#F59E0B" if (is_hol and shift_val is not None) else st["fg"]
+                is_wknd = d in horizon.weekend_indices
+
+                if is_hol and shift_val is not None:
+                    cell_fg = "#F59E0B"
+                elif is_wknd and shift_val is not None:
+                    cell_fg = "#60A5FA"
+                else:
+                    cell_fg = st["fg"]
 
                 c_lbl = tk.Label(
                     grid_frame,
@@ -1350,9 +1368,9 @@ class SmartSchedulerGUI:
 
         ctk.CTkLabel(
             footer_frame,
-            text="M = Morning      P = Afternoon      N = Night      · = Riposo",
+            text="M = Morning      P = Afternoon      N = Night      · = Riposo          ▎ Arancione = Festività      ▎ Blu = Weekend",
             font=ctk.CTkFont(family=FONT_MONO, size=12),
-            text_color="#52525B"
+            text_color="#71717A"
         ).pack(side="left")
 
     # ═══════════════════════════════════════════

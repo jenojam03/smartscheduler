@@ -60,7 +60,6 @@ class WorkerSatisfactionModel:
             satisfaction_terms.append(excess_nights * -15)
 
         # TOLLERANZA FESTIVI: penalità progressiva (-15 per ogni turno festivo extra)
-        # Usa holiday_indices che ora contiene SOLO le festività nazionali (non i weekend)
         if tol.max_tolerated_holidays is not None:
             limit_h = tol.max_tolerated_holidays
             actual_holidays = sum(
@@ -73,7 +72,6 @@ class WorkerSatisfactionModel:
             satisfaction_terms.append(excess_holidays * -15)
 
         # TOLLERANZA WEEKEND: penalità progressiva (-15 per ogni turno weekend extra)
-        # Usa weekend_indices che contiene SOLO Sabato e Domenica (non le festività nazionali)
         if tol.max_tolerated_weekends is not None:
             limit_w = tol.max_tolerated_weekends
             actual_weekends = sum(
@@ -121,7 +119,7 @@ class WorkerSatisfactionModel:
             candidate_pairs: set = set()
 
             # REGOLA 1 & 2: ogni coppia di giorni adiacenti nel calendario
-            # (copre notti consecutive E coppie Sabato-Domenica)
+            # (copre notti consecutive e coppie Sabato-Domenica)
             for d in range(self.horizon.total_days - 1):
                 candidate_pairs.add((d, d + 1))
 

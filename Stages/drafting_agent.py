@@ -114,7 +114,13 @@ class ScheduleDraftingAgent:
                                 shifts[(w, d + offset, next_s)] == 0
                             ).only_enforce_if(shifts[(w, d, night_idx)])
 
-        # D. Equità turni di notte (gap max 2 tra worker)
+        # Calcolo dinamico dei gap ottimali in base a orizzonte e numero di lavoratori
+        dyn_gaps = self.horizon.compute_fairness_gaps(self.num_workers, is_refinement=False)
+        dyn_night_gap   = dyn_gaps["night_gap"]
+        dyn_holiday_gap = dyn_gaps["holiday_gap"]
+        dyn_weekend_gap = dyn_gaps["weekend_gap"]
+
+        # D. Equità turni di notte (gap calcolato dinamicamente tra worker)
         night_counts = []
         for w in range(self.num_workers):
             n_nights = model.new_int_var(0, num_days, f"nights_w{w}")
@@ -125,32 +131,57 @@ class ScheduleDraftingAgent:
         min_nights = model.new_int_var(0, num_days, "min_nights")
         model.add_max_equality(max_nights, night_counts)
         model.add_min_equality(min_nights, night_counts)
-        model.add(max_nights - min_nights <= 2)
+        model.add(max_nights - min_nights <= dyn_night_gap)
 
-        # E. Equità carico festivo (gap max 3 tra worker)
-        holiday_counts = []
-        for w in range(self.num_workers):
-            h_shifts = model.new_int_var(
-                0, len(self.horizon.holiday_indices) * self.num_shifts, f"holidays_w{w}"
+        # E. Equità carico festivo (gap calcolato dinamicamente tra worker)
+        if self.horizon.holiday_indices and dyn_holiday_gap > 0:
+            holiday_counts = []
+            for w in range(self.num_workers):
+                h_shifts = model.new_int_var(
+                    0, len(self.horizon.holiday_indices) * self.num_shifts, f"holidays_w{w}"
+                )
+                model.add(h_shifts == sum(
+                    shifts[(w, d, s)]
+                    for d in self.horizon.holiday_indices
+                    for s in range(self.num_shifts)
+                ))
+                holiday_counts.append(h_shifts)
+
+            max_holidays = model.new_int_var(
+                0, len(self.horizon.holiday_indices) * self.num_shifts, "max_holidays"
             )
-            model.add(h_shifts == sum(
-                shifts[(w, d, s)]
-                for d in self.horizon.holiday_indices
-                for s in range(self.num_shifts)
-            ))
-            holiday_counts.append(h_shifts)
+            min_holidays = model.new_int_var(
+                0, len(self.horizon.holiday_indices) * self.num_shifts, "min_holidays"
+            )
+            model.add_max_equality(max_holidays, holiday_counts)
+            model.add_min_equality(min_holidays, holiday_counts)
+            model.add(max_holidays - min_holidays <= dyn_holiday_gap)
 
-        max_holidays = model.new_int_var(
-            0, len(self.horizon.holiday_indices) * self.num_shifts, "max_holidays"
-        )
-        min_holidays = model.new_int_var(
-            0, len(self.horizon.holiday_indices) * self.num_shifts, "min_holidays"
-        )
-        model.add_max_equality(max_holidays, holiday_counts)
-        model.add_min_equality(min_holidays, holiday_counts)
-        model.add(max_holidays - min_holidays <= 3)
+        # F. Equità carico weekend (gap calcolato dinamicamente tra worker)
+        if self.horizon.weekend_indices and dyn_weekend_gap > 0:
+            weekend_counts = []
+            for w in range(self.num_workers):
+                w_shifts = model.new_int_var(
+                    0, len(self.horizon.weekend_indices) * self.num_shifts, f"weekends_w{w}"
+                )
+                model.add(w_shifts == sum(
+                    shifts[(w, d, s)]
+                    for d in self.horizon.weekend_indices
+                    for s in range(self.num_shifts)
+                ))
+                weekend_counts.append(w_shifts)
 
-        # F. Monte turni mensile esatto (da config: exact_monthly_equivalent_shifts)
+            max_weekends = model.new_int_var(
+                0, len(self.horizon.weekend_indices) * self.num_shifts, "max_weekends"
+            )
+            min_weekends = model.new_int_var(
+                0, len(self.horizon.weekend_indices) * self.num_shifts, "min_weekends"
+            )
+            model.add_max_equality(max_weekends, weekend_counts)
+            model.add_min_equality(min_weekends, weekend_counts)
+            model.add(max_weekends - min_weekends <= dyn_weekend_gap)
+
+        # G. Monte turni mensile esatto (da config: exact_monthly_equivalent_shifts)
         for w in range(self.num_workers):
             total_monthly = sum(
                 shifts[(w, d, s)] * self._shift_weights[s]
@@ -159,7 +190,7 @@ class ScheduleDraftingAgent:
             )
             model.add(total_monthly == cfg.exact_monthly_equivalent_shifts)
 
-        # G. Limite ore settimanali: Massimo tot (36) ore per settimana solare (Lunedi' - Domenica)
+        # H. Limite ore settimanali: Massimo tot (36) ore per settimana solare (Lunedi' - Domenica)
         calendar_weeks = self.horizon.get_calendar_weeks()
         for w in range(self.num_workers):
             for week_days in calendar_weeks:
@@ -170,7 +201,7 @@ class ScheduleDraftingAgent:
                 )
                 model.add(weekly_hours <= cfg.max_weekly_working_hours)
 
-        # H. Almeno 1 giorno di riposo per ogni settimana di calendario completa (>= 6 giorni).
+        # I. Almeno 1 giorno di riposo per ogni settimana di calendario completa (>= 6 giorni).
         # NOTA: I 2 giorni di riposo obbligatori post-notte (shifts[(w, d, s)] == 0)
         # sono considerati giorni di riposo a tutti gli effetti e soddisfano questo vincolo.
         # Le preferenze individuali di riposo (preferred_rest_days) sono premiate

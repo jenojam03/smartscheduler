@@ -83,15 +83,21 @@ class ScheduleRefinementAgent:
         self,
         locked_min_satisfaction: int,
         target_worker_idx: Optional[int] = None,
-        max_night_gap: int = 2,
-        max_holiday_gap: int = 2,
-        max_weekend_gap: int = 3,
+        max_night_gap: Optional[int] = None,
+        max_holiday_gap: Optional[int] = None,
+        max_weekend_gap: Optional[int] = None,
         time_limit_seconds: int = 30
     ) -> Dict[str, Any]:
         model, shifts, worker_satisfactions, min_sat_var = self.drafting_agent.build_ortools_model()
         num_days  = self.horizon.total_days
         night_idx = SHIFT_MAP["night"]
         cfg       = self.config
+
+        # Calcolo dinamico dei gap per il refinement (se non passati esplicitamente)
+        dyn_gaps = self.horizon.compute_fairness_gaps(self.num_workers, is_refinement=True)
+        act_night_gap   = max_night_gap if max_night_gap is not None else dyn_gaps["night_gap"]
+        act_holiday_gap = max_holiday_gap if max_holiday_gap is not None else dyn_gaps["holiday_gap"]
+        act_weekend_gap = max_weekend_gap if max_weekend_gap is not None else dyn_gaps["weekend_gap"]
 
         # NON PEGGIORAMENTO: nessun lavoratore può scendere sotto la soglia minima
         # Il miglioramento della soddisfazione del worker più svantaggiato non deve abbassare
@@ -110,10 +116,10 @@ class ScheduleRefinementAgent:
         min_nights = model.new_int_var(0, num_days, "min_nights")
         model.add_max_equality(max_nights, night_counts)
         model.add_min_equality(min_nights, night_counts)
-        model.add(max_nights - min_nights <= max_night_gap)
+        model.add(max_nights - min_nights <= act_night_gap)
 
         # 2. Bilanciamento equo delle festività nazionali
-        if self.horizon.holiday_indices:
+        if self.horizon.holiday_indices and act_holiday_gap > 0:
             holiday_counts = []
             for w in range(self.num_workers):
                 h_shifts = model.new_int_var(
@@ -134,10 +140,10 @@ class ScheduleRefinementAgent:
             )
             model.add_max_equality(max_holidays, holiday_counts)
             model.add_min_equality(min_holidays, holiday_counts)
-            model.add(max_holidays - min_holidays <= max_holiday_gap)
+            model.add(max_holidays - min_holidays <= act_holiday_gap)
 
         # 3. Bilanciamento equo dei weekend
-        if self.horizon.weekend_indices:
+        if self.horizon.weekend_indices and act_weekend_gap > 0:
             weekend_counts = []
             for w in range(self.num_workers):
                 w_shifts = model.new_int_var(
@@ -158,7 +164,7 @@ class ScheduleRefinementAgent:
             )
             model.add_max_equality(max_weekends, weekend_counts)
             model.add_min_equality(min_weekends, weekend_counts)
-            model.add(max_weekends - min_weekends <= max_weekend_gap)
+            model.add(max_weekends - min_weekends <= act_weekend_gap)
 
         # Riduzione della disparita' di soddisfazione
         max_sat = model.new_int_var(-10000, 10000, "max_sat")
@@ -276,9 +282,6 @@ class ScheduleRefinementAgent:
             refine_result = self.solve_refined_step(
                 locked_min_satisfaction=fairness_eval["min_satisfaction"],
                 target_worker_idx=target_idx,
-                max_night_gap=2,
-                max_holiday_gap=2,
-                max_weekend_gap=3,
                 time_limit_seconds=20
             )
 
@@ -315,7 +318,7 @@ class ScheduleRefinementAgent:
             min_not_worsened = (ref_min_score >= curr_min_score) and (ref_min_ratio >= curr_min_ratio - 1e-4)
 
             # Criteri di progresso reale della fairness complessiva:
-            # 1. Rawlsian / Max-Min: innalzamento effettivo della soglia minima globale
+            # 1. Max-Min: innalzamento effettivo della soglia minima globale
             floor_improved = (ref_min_score > curr_min_score) or (ref_min_ratio > curr_min_ratio + 1e-4)
 
             # 2. Leximin: riduzione della platea dei lavoratori svantaggiati (senza che altri scendano al minimo)
