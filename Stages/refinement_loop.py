@@ -93,88 +93,21 @@ class ScheduleRefinementAgent:
         night_idx = SHIFT_MAP["night"]
         cfg       = self.config
 
-        # Calcolo dinamico dei gap per il refinement (se non passati esplicitamente)
-        dyn_gaps = self.horizon.compute_fairness_gaps(self.num_workers, is_refinement=True)
-        act_night_gap   = max_night_gap if max_night_gap is not None else dyn_gaps["night_gap"]
-        act_holiday_gap = max_holiday_gap if max_holiday_gap is not None else dyn_gaps["holiday_gap"]
-        act_weekend_gap = max_weekend_gap if max_weekend_gap is not None else dyn_gaps["weekend_gap"]
-
-        # NON PEGGIORAMENTO: nessun lavoratore può scendere sotto la soglia minima
-        # Il miglioramento della soddisfazione del worker più svantaggiato non deve abbassare
-        # la soglia minima di soddisfazione già esistente
+        # NON PEGGIORAMENTO RIGIDO:
+        # Il miglioramento del lavoratore più svantaggiato NON deve peggiorare la soddisfazione minima
+        # raggiunta (principio Max-Min).
         for sat_var in worker_satisfactions:
             model.add(sat_var >= locked_min_satisfaction)
 
-        # 1. Bilanciamento equo dei turni di notte
-        night_counts = []
-        for w in range(self.num_workers):
-            n_nights = model.new_int_var(0, num_days, f"nights_w{w}")
-            model.add(n_nights == sum(shifts[(w, d, night_idx)] for d in range(num_days)))
-            night_counts.append(n_nights)
-
-        max_nights = model.new_int_var(0, num_days, "max_nights")
-        min_nights = model.new_int_var(0, num_days, "min_nights")
-        model.add_max_equality(max_nights, night_counts)
-        model.add_min_equality(min_nights, night_counts)
-        model.add(max_nights - min_nights <= act_night_gap)
-
-        # 2. Bilanciamento equo delle festività nazionali
-        if self.horizon.holiday_indices and act_holiday_gap > 0:
-            holiday_counts = []
-            for w in range(self.num_workers):
-                h_shifts = model.new_int_var(
-                    0, len(self.horizon.holiday_indices) * cfg.num_shifts, f"holidays_w{w}"
-                )
-                model.add(h_shifts == sum(
-                    shifts[(w, d, s)]
-                    for d in self.horizon.holiday_indices
-                    for s in range(cfg.num_shifts)
-                ))
-                holiday_counts.append(h_shifts)
-
-            max_holidays = model.new_int_var(
-                0, len(self.horizon.holiday_indices) * cfg.num_shifts, "max_holidays"
-            )
-            min_holidays = model.new_int_var(
-                0, len(self.horizon.holiday_indices) * cfg.num_shifts, "min_holidays"
-            )
-            model.add_max_equality(max_holidays, holiday_counts)
-            model.add_min_equality(min_holidays, holiday_counts)
-            model.add(max_holidays - min_holidays <= act_holiday_gap)
-
-        # 3. Bilanciamento equo dei weekend
-        if self.horizon.weekend_indices and act_weekend_gap > 0:
-            weekend_counts = []
-            for w in range(self.num_workers):
-                w_shifts = model.new_int_var(
-                    0, len(self.horizon.weekend_indices) * cfg.num_shifts, f"weekends_w{w}"
-                )
-                model.add(w_shifts == sum(
-                    shifts[(w, d, s)]
-                    for d in self.horizon.weekend_indices
-                    for s in range(cfg.num_shifts)
-                ))
-                weekend_counts.append(w_shifts)
-
-            max_weekends = model.new_int_var(
-                0, len(self.horizon.weekend_indices) * cfg.num_shifts, "max_weekends"
-            )
-            min_weekends = model.new_int_var(
-                0, len(self.horizon.weekend_indices) * cfg.num_shifts, "min_weekends"
-            )
-            model.add_max_equality(max_weekends, weekend_counts)
-            model.add_min_equality(min_weekends, weekend_counts)
-            model.add(max_weekends - min_weekends <= act_weekend_gap)
-
         # Riduzione della disparita' di soddisfazione
-        max_sat = model.new_int_var(-10000, 10000, "max_sat")
-        min_sat = model.new_int_var(-10000, 10000, "min_sat")
+        max_sat = model.new_int_var(-10000, 10000, "max_sat") # massimo valore di soddisfazione
+        min_sat = model.new_int_var(-10000, 10000, "min_sat") # minimo valore di soddisfazione
         model.add_max_equality(max_sat, worker_satisfactions)
         model.add_min_equality(min_sat, worker_satisfactions)
 
         total_sat = sum(worker_satisfactions)
 
-        # Nuova funzione obiettivo definita su 4 priorità:
+        # Funzione obiettivo definita su 4 priorità:
         # 1. Massimizza la soddisfazione del lavoratore svantaggiato e scarica i suoi turni sgraditi ad altri
         # 2. Mantiene alto il punteggio minimo generale (non deve crearsi un lavoratore più disperato)
         # 3. Riduzione del divario tra lavoratore più soddisfatto e meno soddisfatto
@@ -314,29 +247,43 @@ class ScheduleRefinementAgent:
             curr_disadvantaged_count = sum(1 for r in ratios if r <= curr_min_ratio + 1e-4)
             ref_disadvantaged_count  = sum(1 for r in refined_ratios if r <= curr_min_ratio + 1e-4)
 
-            # Condizione necessaria: la soddisfazione minima globale non deve peggiorare
-            min_not_worsened = (ref_min_score >= curr_min_score) and (ref_min_ratio >= curr_min_ratio - 1e-4)
+            # CRITERIO DI ACCETTAZIONE DI UN RAFFINAMENTO
+            # Condizione necessaria 1: la soddisfazione minima non deve peggiorare
+            min_not_worsened = (ref_min_score >= curr_min_score)
 
-            # Criteri di progresso reale della fairness complessiva:
-            # 1. Max-Min: innalzamento effettivo della soglia minima globale
+            # Condizione necessaria 2: la disuguaglianza globale (Gini) non deve aumentare
+            gini_not_worsened = (ref_gini <= curr_gini + 0.0005)
+
+            # Criteri di progresso reale della fairness: deve verificarsi almeno uno
+            # 1. Innalzamento del pavimento minimo
             floor_improved = (ref_min_score > curr_min_score) or (ref_min_ratio > curr_min_ratio + 1e-4)
 
-            # 2. Leximin: riduzione della platea dei lavoratori svantaggiati (senza che altri scendano al minimo)
+            # 2. La distribuzione dei turni è diventata più equa (Gini è calato)
+            gini_improved = (ref_gini < curr_gini - 0.001)
+
+            # 3. Miglioramento mirato del target worker SENZA peggiorare la disuguaglianza globale
+            target_improved = (
+                (refined_scores[target_idx] > current_scores[target_idx] or
+                 refined_ratios[target_idx] > ratios[target_idx] + 1e-4)
+                and gini_not_worsened
+            )
+
+            # 4. Leximin: riduzione della platea dei lavoratori fermi al livello minimo. 
+            # Il principio leximin vuole che se il valore minimo non può alzarsi numericamente, si cerca
+            # almeno di diminuire il numero di persone intrappolate a quel livello minimo
             disadvantaged_reduced = (
                 ref_disadvantaged_count < curr_disadvantaged_count and
                 refined_ratios[target_idx] > ratios[target_idx]
             )
 
-            # 3. Indice di Gini: diminuzione misurabile della disuguaglianza complessiva dell'organico
-            gini_improved = (ref_gini < curr_gini - 0.001)
+            # 5. Riduzione del divario tra chi sta meglio e chi sta peggio
+            gap_improved = (ref_gap < curr_gap) and gini_not_worsened
 
-            # 4. Divario Max-Min: compressione della forbice complessiva a parità o aumento del totale
-            gap_improved = (ref_gap < curr_gap) and (sum(refined_scores) >= sum(current_scores))
-
-            improved = min_not_worsened and (
+            improved = min_not_worsened and gini_not_worsened and (
                 floor_improved or
-                disadvantaged_reduced or
                 gini_improved or
+                target_improved or
+                disadvantaged_reduced or
                 gap_improved
             )
 
