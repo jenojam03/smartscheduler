@@ -8,21 +8,21 @@ SHIFT_HOURS = {0: 6, 1: 6, 2: 12, None: 0}
 SHIFT_UNITS = {0: 1, 1: 1, 2: 2, None: 0}     
 
 # NOTA: il vincolo sui turni consecutivi non è stato implementato perchè soddisfatto automaticamente dai 
-# vincoli:
+# due vincoli:
 # - al più un turno al giorno
 # - riposo post-notte (almeno 2 giorni liberi dopo ogni turno di notte)
 # Il suo inserimento renderebbe ridondante la logica di verifica.
 
 class HardConstraintVerificationAgent:
     """
-    Symbolic Verification Agent per la conformita' dei vincoli rigidi (Hard Constraints).
+    Symbolic Verification Agent per la conformita' dei vincoli hard.
 
     Valuta:
-    1. Staffing requirements (copertura minima Use Case A e B)
-    2. Legal work limits (max ore/settimana e monte turni mensili)
-    3. Mandatory rest constraints (N giorni di riposo post-notte)
-    4. Shift compatibility rules (max 1 turno al giorno)
-    5. Specifiche indisponibilita' individuali (unavailable_days)
+    1. Copertura minima staff per Use Case A e B
+    2. Limiti orari (max ore/settimana e monte turni mensili)
+    3. Vincoli di riposo (N giorni di riposo post-notte)
+    4. Compatibilità dei turni (max 1 turno al giorno)
+    5. Indisponibilita' individuali 
     """
 
     def __init__(
@@ -94,7 +94,7 @@ class HardConstraintVerificationAgent:
                         )
 
         # -----------------------------------------------------------------
-        # 2. Verifica Riposo Post-Notte
+        # 2. Verifica riposo post-notte
         # -----------------------------------------------------------------
         night_idx = SHIFT_MAP.get("night", 2)
         rest_days = cfg.mandatory_rest_days_after_night
@@ -109,7 +109,7 @@ class HardConstraintVerificationAgent:
                             )
 
         # -----------------------------------------------------------------
-        # 3. Verifica Limite Ore Settimanali (<= 36h per settimana solare Lun-Dom)
+        # 3. Verifica limite ore settimanali (<= 36h per settimana solare Lun-Dom)
         # -----------------------------------------------------------------
         calendar_weeks = self.horizon.get_calendar_weeks()
         for w in range(self.num_workers):
@@ -125,10 +125,8 @@ class HardConstraintVerificationAgent:
                     )
 
         # -----------------------------------------------------------------
-        # 3b. Verifica Riposo Minimo Settimanale (almeno 1 giorno libero
+        # 3b. Verifica riposo minimo settimanale (almeno 1 giorno libero
         #     per ogni settimana di calendario completa)
-        # NOTA: I 2 giorni post-notte (schedule_matrix[w][d] is None) sono
-        # considerati giorni di riposo a tutti gli effetti.
         # -----------------------------------------------------------------
         for w in range(self.num_workers):
             for week_idx, week_days in enumerate(calendar_weeks, 1):
@@ -144,7 +142,7 @@ class HardConstraintVerificationAgent:
                         )
 
         # -----------------------------------------------------------------
-        # 4. Verifica Monte Turni Mensile
+        # 4. Verifica turni mensili
         # -----------------------------------------------------------------
         for w in range(self.num_workers):
             total_units = sum(
@@ -169,23 +167,9 @@ class HardConstraintVerificationAgent:
                             f"[One-Shift] Worker {w + 1}: piu' di un turno assegnato al giorno {d + 1}."
                         )
 
-        '''# -----------------------------------------------------------------
-        # 5b. Verifica Nessun Turno Consecutivo
-        # Controlla che nessun lavoratore copra turni cronologicamente consecutivi:
-        # - Notte (2) al giorno d e Mattina (0) al giorno d+1
-        # -----------------------------------------------------------------
-        if getattr(cfg, "no_consecutive_shifts", True):
-            for w in range(self.num_workers):
-                for d in range(num_days - 1):
-                    if schedule_matrix[w][d] == 2 and schedule_matrix[w][d + 1] == 0:
-                        violations.append(
-                            f"[Consecutive Shifts] Worker {w + 1}: turno di Notte al giorno {d + 1} "
-                            f"({self.horizon.index_to_date[d]}) seguito consecutivamente da turno di Mattina "
-                            f"al giorno {d + 2} ({self.horizon.index_to_date[d + 1]})."
-                        )'''
 
         # -----------------------------------------------------------------
-        # 6. Verifica Indisponibilita' Assolute
+        # 6. Verifica indisponibilità
         # -----------------------------------------------------------------
         for profile in self.worker_profiles:
             w = profile.worker_idx

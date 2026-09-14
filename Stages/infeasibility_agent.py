@@ -14,9 +14,9 @@ from drafting_agent import ScheduleDraftingAgent
 
 class InfeasibilityDiagnostician:
     """
-    Agente di Diagnosi Simbolica dell'Infattibilità.
+    Agente di diagnosi dell'infeasibility.
     Analizza matematicamente i profili dei lavoratori e i vincoli di configurazione
-    per individuare la causa radice che rende il modello INFEASIBLE.
+    per individuare la causa radice che rende il modello infeasible.
     """
 
     def __init__(
@@ -146,9 +146,9 @@ class InfeasibilityDiagnostician:
 
 class InfeasibilityExplainer:
     """
-    Agente di Spiegazione in Linguaggio Naturale.
-    Utilizza un LLM con Chain of Thought per formulare una spiegazione empatica,
-    chiara e dettagliata delle ragioni del fallimento per il coordinatore ospedaliero.
+    Agente di spiegazione in linguaggio naturale.
+    Utilizza un LLM con Chain of Thought per formulare una spiegazione
+    chiara e dettagliata delle ragioni del fallimento.
     """
 
     def __init__(self, model_name: str = "llama3.2", temperature: float = 0.0):
@@ -226,10 +226,10 @@ class InfeasibilityExplainer:
 
 class DynamicReplanningAgent:
     """
-    Agente di Replanning Dinamico e Negoziazione con gli Infermieri.
+    Agente di replanning dinamico e negoziazione.
     Se il piano iniziale è INFEASIBLE:
     1. Esegue la diagnosi simbolica.
-    2. Spiega in linguaggio naturale il problema.
+    2. Spiega il problema in linguaggio naturale.
     3. Formula proposte eque di compromesso per gli infermieri coinvolti.
     4. Rilassa in modo mirato e minimale i vincoli critici (es. Hard Unavailable -> Soft Rest Day con bonus)
        per ottenere una soluzione FEASIBLE/OPTIMAL alternativa.

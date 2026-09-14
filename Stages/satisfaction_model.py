@@ -89,13 +89,13 @@ class WorkerSatisfactionModel:
         # Nota: max_tolerated_consecutive_demanding_shifts=0 = "nessuna coppia consecutiva tollerata"
         #
         # Tre regole di consecutività (unite senza double-counting):
-        #   REGOLA 1 - Notte+Notte:          adiacenti nel calendario (d e d+1, entrambi turno notte)
-        #   REGOLA 2 - Weekend+Weekend:      Sabato e Domenica dello stesso weekend (d e d+1 in weekend_indices)
-        #   REGOLA 3 - Festività+Festività:  adiacenti nella sequenza delle sole festività nazionali
+        #   REGOLA 1 - notte+notte:          adiacenti nel calendario (d e d+1, entrambi turno notte)
+        #   REGOLA 2 - weekend+weekend:      sabato e domenica dello stesso weekend (d e d+1 in weekend_indices)
+        #   REGOLA 3 - festività+festività:  adiacenti nella sequenza delle sole festività nazionali
         #                                   (es. 26-12 e 01-01: nessuna altra festività tra loro)
         if tol.max_tolerated_consecutive_demanding_shifts is not None:
             limit_c = tol.max_tolerated_consecutive_demanding_shifts
-            night_idx = 2  # ShiftType.NIGHT
+            night_idx = 2  
 
             # Unione di festività e weekend per determinare i giorni "stancanti"
             demanding_day_indices = self.horizon.holiday_indices | self.horizon.weekend_indices
@@ -119,7 +119,7 @@ class WorkerSatisfactionModel:
             candidate_pairs: set = set()
 
             # REGOLA 1 & 2: ogni coppia di giorni adiacenti nel calendario
-            # (copre notti consecutive e coppie Sabato-Domenica)
+            # (copre notti consecutive e coppie sabato-domenica)
             for d in range(self.horizon.total_days - 1):
                 candidate_pairs.add((d, d + 1))
 
@@ -131,7 +131,6 @@ class WorkerSatisfactionModel:
                 if h2 > h1 + 1:
                     candidate_pairs.add((h1, h2))
 
-            # Bool var per ciascuna coppia candidata
             consec_count_terms = []
             for (d1, d2) in sorted(candidate_pairs):
                 pair = model.new_bool_var(f"consec_pair_w{w}_d{d1}_d{d2}")

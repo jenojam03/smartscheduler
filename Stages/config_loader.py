@@ -65,7 +65,7 @@ class SchedulingConfig:
     one_shift_per_day: bool
     no_consecutive_shifts: bool = True
 
-    # ---- PROPRIETA' DERIVATE ----
+
     @property
     def num_workers(self) -> int:
         return self.num_standard_workers + self.num_specialized_workers

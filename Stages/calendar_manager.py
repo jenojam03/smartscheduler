@@ -30,7 +30,7 @@ def generate_public_holidays(start_date: datetime, end_date: datetime) -> Set[st
         ]
         holidays.update(fixed)
 
-        # Festività mobili: Pasqua e Pasquetta (Algoritmo di Butcher/Gauss)
+        # Festività mobili: Pasqua e Pasquetta
         a = year % 19
         b = year // 100
         c = year % 100
@@ -90,10 +90,10 @@ class SchedulingHorizon:
             is_weekend = curr.weekday() in (5, 6)
             is_public_holiday = d_str in self.public_holidays
 
-            # weekend_indices: solo Sabato e Domenica
+            # weekend_indices
             if is_weekend:
                 self.weekend_indices.add(idx)
-            # holiday_indices: solo festività nazionali (Capodanno, Natale, ecc.)
+            # holiday_indices
             if is_public_holiday:
                 self.holiday_indices.add(idx)
 
@@ -117,7 +117,7 @@ class SchedulingHorizon:
         idx = 0
         while curr <= self.end_date:
             current_week.append(idx)
-            # Se e' Domenica (weekday == 6) o l'ultimo giorno dell'orizzonte, chiudi la settimana
+            # Se è domenica (weekday == 6) o l'ultimo giorno dell'orizzonte, chiudi la settimana
             if curr.weekday() == 6 or curr == self.end_date:
                 weeks.append(current_week)
                 current_week = []
@@ -125,47 +125,3 @@ class SchedulingHorizon:
             idx += 1
             
         return weeks
-
-    def compute_fairness_gaps(self, num_workers: int, is_refinement: bool = False) -> Dict[str, int]:
-        """
-        Calcola dinamicamente i gap massimi ammissibili per garantire equità distributiva
-        proporzionata alla lunghezza del periodo, al numero di lavoratori e al carico totale:
-        - Notti totali stimate nel periodo (1 turno notte per ciascun giorno)
-        - Festività totali (3 turni al giorno per ogni festività nazionale)
-        - Weekend totali (3 turni al giorno per ogni sabato e domenica)
-        """
-        if num_workers <= 0:
-            return {"night_gap": 2, "holiday_gap": 2, "weekend_gap": 3}
-
-        # 1. GAP NOTTI:
-        # In ogni giorno c'è 1 turno di notte. Quota media per lavoratore: total_days / num_workers.
-        avg_nights = self.total_days / num_workers
-        base_night_gap = max(2, round(avg_nights * 0.5) + 2)
-        night_gap = max(2, base_night_gap - 1) if is_refinement else base_night_gap
-
-        # 2. GAP FESTIVITÀ:
-        # Ciascun giorno festivo ha 3 turni da coprire. Quota media: (num_holidays * 3) / num_workers.
-        # Mantenuto costante tra drafting e refinement per non soffocare le richieste di ferie/riposo
-        num_holidays = len(self.holiday_indices)
-        if num_holidays == 0:
-            holiday_gap = 0
-        else:
-            avg_holidays = (num_holidays * 3) / num_workers
-            base_holiday_gap = max(2, round(avg_holidays * 0.45) + 1)
-            holiday_gap = base_holiday_gap
-
-        # 3. GAP WEEKEND:
-        # Ciascun giorno di weekend (sabato e domenica) ha 3 turni. Quota media: (num_weekends * 3) / num_workers.
-        num_weekends = len(self.weekend_indices)
-        if num_weekends == 0:
-            weekend_gap = 0
-        else:
-            avg_weekends = (num_weekends * 3) / num_workers
-            base_weekend_gap = max(3, round(avg_weekends * 0.5) + 2)
-            weekend_gap = max(2, base_weekend_gap - 1) if is_refinement else base_weekend_gap
-
-        return {
-            "night_gap": night_gap,
-            "holiday_gap": holiday_gap,
-            "weekend_gap": weekend_gap
-        }

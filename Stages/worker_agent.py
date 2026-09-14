@@ -65,8 +65,8 @@ class FormalizedWorkerProfile:
             wid = f"Worker {worker_idx + 1}"
         elif wid.isdigit():
             wid = f"Worker {wid}"
-        self.worker_id = wid           #etichetta testuale
-        self.worker_idx = worker_idx   #indice di calcolo (serve a CP-SAT per indicizzare le variabili)
+        self.worker_id = wid           # etichetta testuale
+        self.worker_idx = worker_idx   # indice di calcolo (serve a CP-SAT per indicizzare le variabili)
         self.reasoning = pref.reasoning
         self.raw_preference = pref
         self.horizon = horizon
@@ -203,11 +203,11 @@ Output:
     ])
 
 
-# -------------------------------------- SANITIZER POST-PARSING (RETE DI SICUREZZA) -----------------------------------------
+# -------------------------------------- SANITIZER POST-PARSING -----------------------------------------
 
 def sanitize_parsed_preference(pref: WorkerPreference, raw_text: str) -> WorkerPreference:
     """
-    Rete di sicurezza programmatica per la consistenza logica:
+    Controllo post-parsing per garantire consistenza logica:
     - Risolve conflitti tra turni preferiti e sgraditi
     - Assicura che la preferenza notturna sia coerente con max_tolerated_nights
     - Assicura la mutua esclusione tra vincoli HARD (unavailable) e SOFT (preferred rest)
@@ -215,13 +215,13 @@ def sanitize_parsed_preference(pref: WorkerPreference, raw_text: str) -> WorkerP
     """
     tol = pref.shift_tolerance
 
-    # 1. Risoluzione conflitti preferiti vs sgraditi:
+    # 1. Risoluzione conflitti preferiti vs sgradit
     # Un turno preferito non può mai comparire tra i turni sgraditi
     for pref_st in pref.preferred_shifts:
         if pref_st in tol.disliked_shift_types:
             tol.disliked_shift_types = [s for s in tol.disliked_shift_types if s != pref_st]
 
-    # 2. Coerenza turno notturno:
+    # 2. Coerenza turni notturni
     prefers_night = ShiftType.NIGHT in pref.preferred_shifts
     if prefers_night:
         if tol.max_tolerated_nights == 0:
@@ -253,13 +253,12 @@ def sanitize_parsed_preference(pref: WorkerPreference, raw_text: str) -> WorkerP
 
 class WorkerAgent:
     """
-    Agente di Estrazione Preferenze del Lavoratore (Stage 1).
-    Utilizza un LLM con structured output per convertire il testo libero
+    Agente di estrazione preferenze dei lavoratori (Stage 1).
+    Utilizza un LLM con output strutturato per convertire il testo libero
     delle preferenze di un lavoratore in un FormalizedWorkerProfile.
     Supporta:
-    - Cache persistente su disco per abbattere i tempi da 80s a <0.1s sui testi già analizzati.
-    - Elaborazione sequenziale dei lavoratori (process_all).
-    - Sanitizer post-parsing per correggere le allucinazioni più comuni dell'LLM.
+    - Cache persistente su disco per abbattere i tempi sui testi già analizzati.
+    - Controllo post-parsing per correggere le allucinazioni più comuni dell'LLM.
     """
     def __init__(self, horizon: SchedulingHorizon, model_name: str = "llama3.2", temperature: float = 0.0):
         self.horizon = horizon
@@ -296,7 +295,7 @@ class WorkerAgent:
         # Sanitizer post-parsing: corregge allucinazioni LLM
         parsed_pref = sanitize_parsed_preference(parsed_pref, text)
 
-        # Salva in cache (dopo sanitizzazione)
+        # Salva in cache
         set_cached_preference(text, parsed_pref.model_dump(mode="json"))
 
         return FormalizedWorkerProfile(parsed_pref, worker_idx, self.horizon)
@@ -308,8 +307,6 @@ class WorkerAgent:
     ) -> List[FormalizedWorkerProfile]:
         """
         Elabora tutte le preferenze sequenzialmente sfruttando la cache.
-        - on_progress: callback (worker_idx, text, profile, is_cached) invocata appena ciascun
-                       lavoratore è pronto (utile per l'avanzamento GUI in tempo reale).
         Ritorna la lista dei FormalizedWorkerProfile nell'ordine originale degli indici.
         """
         results: List[FormalizedWorkerProfile] = []

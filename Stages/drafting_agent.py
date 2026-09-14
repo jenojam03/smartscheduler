@@ -41,7 +41,7 @@ class ScheduleDraftingAgent:
             SHIFT_MAP[sh]: self.config.shift_weights.get(sh, 1)
             for sh in self.config.shifts
         }
-        # Ore per turno: {0: h_morning, 1: h_afternoon, 2: h_night}
+        # Ore per turno
         self._shift_hours = {
             SHIFT_MAP[sh]: self.config.shift_hours.get(sh, self.config.shift_duration_hours)
             for sh in self.config.shifts
@@ -114,63 +114,8 @@ class ScheduleDraftingAgent:
                                 shifts[(w, d + offset, next_s)] == 0
                             ).only_enforce_if(shifts[(w, d, night_idx)])
 
-    
-        # dyn_gaps = self.horizon.compute_fairness_gaps(self.num_workers, is_refinement=False)
-        # dyn_night_gap   = dyn_gaps["night_gap"]
-        # dyn_holiday_gap = dyn_gaps["holiday_gap"]
-        # dyn_weekend_gap = dyn_gaps["weekend_gap"]
-        #
-        # # D. Equità turni di notte
-        # night_counts = []
-        # for w in range(self.num_workers):
-        #     n_nights = model.new_int_var(0, num_days, f"nights_w{w}")
-        #     model.add(n_nights == sum(shifts[(w, d, night_idx)] for d in range(num_days)))
-        #     night_counts.append(n_nights)
-        # max_nights = model.new_int_var(0, num_days, "max_nights")
-        # min_nights = model.new_int_var(0, num_days, "min_nights")
-        # model.add_max_equality(max_nights, night_counts)
-        # model.add_min_equality(min_nights, night_counts)
-        # model.add(max_nights - min_nights <= dyn_night_gap)
-        #
-        # # E. Equità carico festivo
-        # if self.horizon.holiday_indices and dyn_holiday_gap > 0:
-        #     holiday_counts = []
-        #     for w in range(self.num_workers):
-        #         h_shifts = model.new_int_var(
-        #             0, len(self.horizon.holiday_indices) * self.num_shifts, f"holidays_w{w}"
-        #         )
-        #         model.add(h_shifts == sum(
-        #             shifts[(w, d, s)]
-        #             for d in self.horizon.holiday_indices
-        #             for s in range(self.num_shifts)
-        #         ))
-        #         holiday_counts.append(h_shifts)
-        #     max_holidays = model.new_int_var(0, len(self.horizon.holiday_indices) * self.num_shifts, "max_holidays")
-        #     min_holidays = model.new_int_var(0, len(self.horizon.holiday_indices) * self.num_shifts, "min_holidays")
-        #     model.add_max_equality(max_holidays, holiday_counts)
-        #     model.add_min_equality(min_holidays, holiday_counts)
-        #     model.add(max_holidays - min_holidays <= dyn_holiday_gap)
-        #
-        # # F. Equità carico weekend
-        # if self.horizon.weekend_indices and dyn_weekend_gap > 0:
-        #     weekend_counts = []
-        #     for w in range(self.num_workers):
-        #         w_shifts = model.new_int_var(
-        #             0, len(self.horizon.weekend_indices) * self.num_shifts, f"weekends_w{w}"
-        #         )
-        #         model.add(w_shifts == sum(
-        #             shifts[(w, d, s)]
-        #             for d in self.horizon.weekend_indices
-        #             for s in range(self.num_shifts)
-        #         ))
-        #         weekend_counts.append(w_shifts)
-        #     max_weekends = model.new_int_var(0, len(self.horizon.weekend_indices) * self.num_shifts, "max_weekends")
-        #     min_weekends = model.new_int_var(0, len(self.horizon.weekend_indices) * self.num_shifts, "min_weekends")
-        #     model.add_max_equality(max_weekends, weekend_counts)
-        #     model.add_min_equality(min_weekends, weekend_counts)
-        #     model.add(max_weekends - min_weekends <= dyn_weekend_gap)
 
-        # G. Monte turni mensile esatto (da config: exact_monthly_equivalent_shifts)
+        # G. Numero di turni mensili esatto
         for w in range(self.num_workers):
             total_monthly = sum(
                 shifts[(w, d, s)] * self._shift_weights[s]
@@ -315,9 +260,9 @@ def create_and_solve_schedule():
     num_days    = {self.horizon.total_days}
     num_shifts  = {self.num_shifts}
 
-    # Shift weights (turni equivalenti): {weights}
+    # Shift weights: {weights}
     shift_weights = {weights}
-    # Shift hours:                       {hours}
+    # Shift hours: {hours}
     shift_hours   = {hours}
 
     shifts = {{}}
@@ -344,7 +289,7 @@ def create_and_solve_schedule():
                 for ns in range(num_shifts):
                     model.add(shifts[(w, d + offset, ns)] == 0).only_enforce_if(shifts[(w, d, {night_idx})])
 
-    # {cfg.exact_monthly_equivalent_shifts} turni equivalenti al mese
+    # {cfg.exact_monthly_equivalent_shifts} turni al mese
     for w in range(num_workers):
         model.add(
             sum(shifts[(w, d, s)] * shift_weights[s]
@@ -352,7 +297,7 @@ def create_and_solve_schedule():
                 for s in range(num_shifts)) == {cfg.exact_monthly_equivalent_shifts}
         )
 
-    # Max {cfg.max_weekly_working_hours} ore settimanali (settimane solari Lunedi-Domenica)
+    # Max {cfg.max_weekly_working_hours} ore settimanali (settimane solari lunedi-domenica)
     # e almeno 1 giorno di riposo per settimana di calendario
     for w in range(num_workers):
         for start_day in range(0, num_days, 7):

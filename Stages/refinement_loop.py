@@ -13,10 +13,9 @@ class ScheduleRefinementAgent:
     """
     Stage 4: Schedule Refinement.
     Implementa:
-    1. Satisfaction Ratio Normalizzato per identificare i veri lavoratori svantaggiati.
-    2. Bilanciamento Equo dei Carichi Gravosi (Notti e Festivi).
-    3. Minimizzazione del Divario (Max Sat - Min Sat) per abbassare l'indice di Gini.
-    Tutti i parametri di scheduling sono letti dal SchedulingConfig.
+    1. Satisfaction ratio normalizzato per identificare i veri lavoratori svantaggiati.
+    2. Bilanciamento equo dei carichi gravosi.
+    3. Minimizzazione del divario (Max Sat - Min Sat) per abbassare l'indice di Gini.
     """
 
     def __init__(
@@ -211,7 +210,7 @@ class ScheduleRefinementAgent:
                 "target_worker":    target_worker_id
             })
 
-            # 3. Callback di raffinamento
+            # 3. Raffinamento
             refine_result = self.solve_refined_step(
                 locked_min_satisfaction=fairness_eval["min_satisfaction"],
                 target_worker_idx=target_idx,
@@ -255,7 +254,7 @@ class ScheduleRefinementAgent:
             gini_not_worsened = (ref_gini <= curr_gini + 0.0005)
 
             # Criteri di progresso reale della fairness: deve verificarsi almeno uno
-            # 1. Innalzamento del pavimento minimo
+            # 1. Innalzamento del minimo
             floor_improved = (ref_min_score > curr_min_score) or (ref_min_ratio > curr_min_ratio + 1e-4)
 
             # 2. La distribuzione dei turni è diventata più equa (Gini è calato)

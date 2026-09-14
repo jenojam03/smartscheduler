@@ -5,9 +5,11 @@ __pycache__/
 
 # Scratch directory & temporary testing images/scripts
 scratch/
+deliverables/
 
 # Testing files
 Stages/test_*.py
+Stages/generate_deliverables.py
 test_*.py
 
 # Generated schedule outputs / experimental results
